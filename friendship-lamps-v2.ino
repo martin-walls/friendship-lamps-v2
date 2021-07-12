@@ -8,7 +8,7 @@
 #define LEDPIN 22
 uint8_t WHITEPINS[] = {25, 26};
 
-// this is a comment
+
 
 // unpressed HIGH, pressed LOW
 #define BTN1PIN 23
