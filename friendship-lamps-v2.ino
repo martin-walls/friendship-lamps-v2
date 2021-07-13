@@ -8,17 +8,16 @@
 #define LEDPIN 22
 uint8_t WHITEPINS[] = {25, 26};
 
-
-
 // unpressed HIGH, pressed LOW
 #define BTN1PIN 23
 #define BTN2PIN 18
 #define BTN3PIN 5
 #define BTN_TICK 1 // tick time 1 ms
 uint32_t btn_previousTickTime;
-#define BTN_MAX_BOUNCE 20 // 20 ms 
+#define BTN_MAX_BOUNCE 20 // 20 ms
 uint8_t btn1_counter = 0;
-
+uint8_t btn2_counter = 0;
+uint8_t btn3_counter = 0;
 
 #define LED_PWM_FREQUENCY 5000 /* Hz */
 #define LED_PWM_RESOLUTION 8   /* pwm resolution in bits */
@@ -34,7 +33,6 @@ uint8_t currentBrightnessPresetIndex = 0;
 
 uint8_t testTwinkleArray[NUMWHITE];
 int8_t testTwinkleArray2[NUMWHITE];
-
 
 void setup() {
     pinMode(BTN1PIN, INPUT);
@@ -63,8 +61,7 @@ void setup() {
         testTwinkleArray2[ledIndex] = 1;
     }
 
-
-    whiteleds[0] = 0;
+    whiteleds[0] = 255;
 }
 
 void loop() {
@@ -76,6 +73,7 @@ void loop() {
     //     whiteLedFadeDirection *= -1;
     // }
     FastLED.delay(5);
+    whiteLedsShow();
 
     // white leds twinkle
     // for (int i = 0; i<NUMWHITE; i++) {
@@ -89,7 +87,6 @@ void loop() {
     // }
     // whiteLedsShow();
 
-
     // if (digitalRead(BTN1PIN) == 0) {
     //     FastLED.delay(20);
     //     if (digitalRead(BTN1PIN) == 0) {
@@ -98,26 +95,28 @@ void loop() {
     //     }
     // }
 
-    // increment btn counter every time we read it as active (LOW); 
-    // reset to 0 every time we read as inactive;
-    // assume finished bouncing when counter is MAX_VAL (btn has been active for that long)
+    // poll btns
     if ((millis() - btn_previousTickTime) >= BTN_TICK) {
         btn_previousTickTime = millis();
-        uint8_t btn1_value = digitalRead(BTN1PIN);
-        if (btn1_value == 0) {
-            btn1_counter++;
-        } else {
-            btn1_counter = 0;
-        }
-        
-        if (btn1_counter == BTN_MAX_BOUNCE) {
+
+        // poll btn 1
+        bool btn1_pressed = pollBtn(BTN1PIN, &btn1_counter);
+        if (btn1_pressed) {
             advanceToNextBrightnessPreset();
         }
+
+        // poll btn 2
+        bool btn2_pressed = pollBtn(BTN2PIN, &btn2_counter);
+        if (btn2_pressed) {
+            whiteleds[0] = 255 - whiteleds[0]; //todo not working???
+        }
+
+        // poll btn 3
+        bool btn3_pressed = pollBtn(BTN3PIN, &btn3_counter);
+        if (btn3_pressed) {
+            // action on btn 3 press
+        }
     }
-    
-
-
-
 }
 
 void whiteLedsShow() {
@@ -126,6 +125,20 @@ void whiteLedsShow() {
         // and update LED output value
         ledcWrite(i, whiteleds[i]);
     }
+}
+
+// increment btn counter every time we read it as active (LOW);
+// reset to 0 every time we read as inactive;
+// assume finished bouncing when counter is MAX_VAL (btn has been active for that long)
+bool pollBtn(uint8_t btn_pin, uint8_t *btn_counter) {
+    uint8_t btn_value = digitalRead(btn_pin);
+    if (btn_value == 0) {
+        (*btn_counter)++;
+    } else {
+        *btn_counter = 0;
+    }
+
+    return *btn_counter == BTN_MAX_BOUNCE;
 }
 
 void advanceToNextBrightnessPreset() {
