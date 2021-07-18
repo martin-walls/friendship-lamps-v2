@@ -1,4 +1,22 @@
+#define THING_INDEX 0
+
+#if THING_INDEX == 0
+#include "secrets/secrets_0.h"
+#else
+#include "secrets/secrets_1.h"
+#endif
+
 #include <FastLED.h>
+
+#include <WiFi.h>
+#include <WiFiManager.h>
+
+#include <BlynkSimpleEsp32.h>
+WidgetBridge blynkBridge(VPIN_COLOR_SEND);
+BlynkTimer timer_sendToOtherDevice;
+BlynkTimer timer_pollBtns;
+BlynkTimer timer_ledOutputs;
+#define BLYNK_STATUS_REQUEST_COLOR 0
 
 #define LEDTYPE WS2812B
 #define NUMLEDS 2
@@ -15,9 +33,9 @@ uint8_t WHITEPINS[] = {25, 26};
 #define BTN_TICK 1 // tick time 1 ms
 uint32_t btn_previousTickTime;
 #define BTN_MAX_BOUNCE 15 // ms
-uint8_t btn1_counter = 0;
-uint8_t btn2_counter = 0;
-uint8_t btn3_counter = 0;
+uint16_t btn1_counter = 0;
+uint16_t btn2_counter = 0;
+uint16_t btn3_counter = 0;
 
 #define LED_PWM_FREQUENCY 5000 /* Hz */
 #define LED_PWM_RESOLUTION 8   /* pwm resolution in bits */
@@ -30,8 +48,6 @@ uint8_t whiteleds[NUMWHITE];
 // back arrays to hold last output from other mode
 CRGB previous_leds[NUMLEDS];
 uint8_t previous_whiteleds[NUMWHITE];
-
-
 
 #define NUM_BRIGHTNESS_PRESETS 4
 uint8_t brightnessPresets[] = {64, 128, 192, 255};
@@ -46,20 +62,46 @@ typedef struct {
     uint8_t w;
 } RGBW;
 
-
 #define NUM_COLOR_PRESETS 4
 RGBW colorPresets[] = {
-    {CRGB(255,0,0), 0},
-    {CRGB(127,127,0), 64},
-    {CRGB(0,196,0), 255},
-    {CRGB(0,64,152), 128}
-};
+    {CRGB(255, 0, 0), 0},
+    {CRGB(127, 127, 0), 64},
+    {CRGB(0, 196, 0), 255},
+    {CRGB(0, 64, 152), 128}};
 uint8_t currentColorPresetIndex = 0;
+uint8_t lastSentColorPresetIndex = currentColorPresetIndex;
 
-RGBW nightlightColor = {CRGB(0,0,0),192};
-
+RGBW nightlightColor = {CRGB(0, 0, 0), 192};
 
 void setup() {
+    // connect to wifi
+    WiFiManager wifiManager;
+    // wifiManager.resetSettings();
+
+    // try to connect to saved ssid/password
+    // else start AP for configuration
+    if (!wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD)) {
+        delay(3000);
+        // reset and try again if it didn't work
+        ESP.restart();
+        delay(5000);
+    }
+    // now connected to wifi
+
+    // blynk configuration
+    delay(1000);
+    Blynk.config(BLYNK_AUTH_THIS);
+    bool success = Blynk.connect(180);
+    if (!success) {
+        ESP.restart();
+        delay(5000);
+    }
+
+    timer_sendToOtherDevice.setInterval(1000, timerEvent_sendToOtherDevice);
+    timer_pollBtns.setInterval(BTN_TICK, timerEvent_pollBtns);
+    timer_ledOutputs.setInterval(10, showAllRGBW);
+
+    // configure pin inputs
     pinMode(BTN1PIN, INPUT);
     pinMode(BTN2PIN, INPUT);
     pinMode(BTN3PIN, INPUT);
@@ -80,50 +122,26 @@ void setup() {
     FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
 
     // initial color
-    fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
-    showAllRGBW();
-
-    
-
+    // fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
+    // showAllRGBW();
 
     // fill nightlight color into back array
-    for (uint8_t i = 0; i<NUMLEDS; i++) {
+    for (uint8_t i = 0; i < NUMLEDS; i++) {
         previous_leds[i] = nightlightColor.rgb;
     }
     for (uint8_t i = 0; i < NUMWHITE; i++) {
         previous_whiteleds[i] = nightlightColor.w;
     }
+
+    // request color from other device (sync with other device on power on)
+    blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_REQUEST_COLOR);
 }
 
 void loop() {
-    FastLED.delay(5);
-    showAllRGBW();
-
-    // poll btns
-    if ((millis() - btn_previousTickTime) >= BTN_TICK) {
-        btn_previousTickTime = millis();
-
-        // poll btn 1
-        bool btn1_pressed = pollBtn(BTN1PIN, &btn1_counter);
-        if (btn1_pressed) {
-            advanceToNextBrightnessPreset();
-        }
-
-        // poll btn 2
-        bool btn2_pressed = pollBtn(BTN2PIN, &btn2_counter);
-        if (btn2_pressed) {
-            if (globalMode == GLOBALMODE_NORMAL) {
-                advanceToNextColorPreset();
-            }
-        }
-
-        // poll btn 3
-        bool btn3_pressed = pollBtn(BTN3PIN, &btn3_counter);
-        if (btn3_pressed) {
-            // action on btn 3 press
-            toggleNightlightMode();
-        }
-    }
+    Blynk.run();
+    timer_ledOutputs.run();
+    timer_pollBtns.run();
+    timer_sendToOtherDevice.run();
 }
 
 void setRGBWPixel(uint8_t i, RGBW color) {
@@ -161,10 +179,33 @@ void fillSolid_RGBW(RGBW color) {
     }
 }
 
+void timerEvent_pollBtns() {
+    // poll btn 1
+    bool btn1_pressed = pollBtn(BTN1PIN, &btn1_counter);
+    if (btn1_pressed) {
+        advanceToNextBrightnessPreset();
+    }
+
+    // poll btn 2
+    bool btn2_pressed = pollBtn(BTN2PIN, &btn2_counter);
+    if (btn2_pressed) {
+        if (globalMode == GLOBALMODE_NORMAL) {
+            advanceToNextColorPreset();
+        }
+    }
+
+    // poll btn 3
+    bool btn3_pressed = pollBtn(BTN3PIN, &btn3_counter);
+    if (btn3_pressed) {
+        // action on btn 3 press
+        toggleNightlightMode();
+    }
+}
+
 // increment btn counter every time we read it as active (LOW);
 // reset to 0 every time we read as inactive;
 // assume finished bouncing when counter is MAX_VAL (btn has been active for that long)
-bool pollBtn(uint8_t btn_pin, uint8_t *btn_counter) {
+bool pollBtn(uint8_t btn_pin, uint16_t *btn_counter) {
     uint8_t btn_value = digitalRead(btn_pin);
     if (btn_value == LOW) {
         (*btn_counter)++;
@@ -207,13 +248,43 @@ void toggleNightlightMode() {
         previous_leds[i] = leds[i];
         leds[i] = tmp;
     }
-    for (uint8_t i = 0; i<NUMWHITE; i++) {
+    for (uint8_t i = 0; i < NUMWHITE; i++) {
         uint8_t tmp = previous_whiteleds[i];
         previous_whiteleds[i] = whiteleds[i];
         whiteleds[i] = tmp;
     }
 
     showAllRGBW();
+}
+
+void timerEvent_sendToOtherDevice() {
+    if (currentColorPresetIndex != lastSentColorPresetIndex) {
+        blynk_sendToOtherDevice();
+    }
+}
+
+// in separate function so we can send colour when requested, bypassing the 
+// check for if colour has changed
+void blynk_sendToOtherDevice() {
+    blynkBridge.virtualWrite(VPIN_COLOR_SEND, currentColorPresetIndex);
+    lastSentColorPresetIndex = currentColorPresetIndex;
+}
+
+BLYNK_CONNECTED() {
+    blynkBridge.setAuthToken(BLYNK_AUTH_OTHER);
+}
+
+// handle when we receive an update from the other device
+BLYNK_WRITE(VPIN_COLOR_READ) {
+    currentColorPresetIndex = param.asInt();
+    fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
+}
+
+BLYNK_WRITE(VPIN_STATUS_READ) {
+    uint8_t code = param.asInt();
+    if (code == BLYNK_STATUS_REQUEST_COLOR) {
+        blynk_sendToOtherDevice();
+    }
 }
 
 const PROGMEM uint8_t gammaVals[] = {
