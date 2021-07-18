@@ -14,7 +14,7 @@ uint8_t WHITEPINS[] = {25, 26};
 #define BTN3PIN 5
 #define BTN_TICK 1 // tick time 1 ms
 uint32_t btn_previousTickTime;
-#define BTN_MAX_BOUNCE 20 // 20 ms
+#define BTN_MAX_BOUNCE 15 // ms
 uint8_t btn1_counter = 0;
 uint8_t btn2_counter = 0;
 uint8_t btn3_counter = 0;
@@ -24,76 +24,80 @@ uint8_t btn3_counter = 0;
 
 extern const uint8_t gammaVals[];
 
+// front arrays to hold current output
 CRGB leds[NUMLEDS];
 uint8_t whiteleds[NUMWHITE];
+// back arrays to hold last output from other mode
+CRGB previous_leds[NUMLEDS];
+uint8_t previous_whiteleds[NUMWHITE];
+
+
 
 #define NUM_BRIGHTNESS_PRESETS 4
 uint8_t brightnessPresets[] = {64, 128, 192, 255};
 uint8_t currentBrightnessPresetIndex = 0;
 
-uint8_t testTwinkleArray[NUMWHITE];
-int8_t testTwinkleArray2[NUMWHITE];
+#define GLOBALMODE_NORMAL 0
+#define GLOBALMODE_NIGHTLIGHT 1
+uint8_t globalMode = GLOBALMODE_NORMAL; // start in normal mode on power on
+
+typedef struct {
+    CRGB rgb;
+    uint8_t w;
+} RGBW;
+
+
+#define NUM_COLOR_PRESETS 4
+RGBW colorPresets[] = {
+    {CRGB(255,0,0), 0},
+    {CRGB(127,127,0), 64},
+    {CRGB(0,196,0), 255},
+    {CRGB(0,64,152), 128}
+};
+uint8_t currentColorPresetIndex = 0;
+
+RGBW nightlightColor = {CRGB(0,0,0),192};
+
 
 void setup() {
     pinMode(BTN1PIN, INPUT);
     pinMode(BTN2PIN, INPUT);
     pinMode(BTN3PIN, INPUT);
 
-    FastLED.addLeds<LEDTYPE, LEDPIN, GRB>(leds, NUMLEDS);
-    FastLED.setDither(0);
-
-    FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
-
-    leds[0] = CRGB(255, 0, 0);
-    leds[1] = CRGB(0, 255, 0);
-    FastLED.show();
-
     // set up a separate PWM channel for each white LED
-    for (int ledIndex = 0; ledIndex < NUMWHITE; ledIndex++) {
+    for (uint8_t ledIndex = 0; ledIndex < NUMWHITE; ledIndex++) {
         // configure PWM channel for LED i
         ledcSetup(ledIndex /* PWM channel number */, LED_PWM_FREQUENCY, LED_PWM_RESOLUTION);
         // attach the PWM channel to the LED pin
         ledcAttachPin(WHITEPINS[ledIndex] /* pin number */, ledIndex /* PWM channel number */);
     }
 
-    for (int ledIndex = 0; ledIndex < NUMWHITE; ledIndex++) {
-        testTwinkleArray[ledIndex] = esp_random(); // array is uint8_t so this is truncated to 0-255
-        testTwinkleArray2[ledIndex] = 1;
-    }
+    // setup rgb leds
+    FastLED.addLeds<LEDTYPE, LEDPIN, GRB>(leds, NUMLEDS);
+    FastLED.setDither(0);
 
-    whiteleds[0] = 255;
+    // initial brightness
+    FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
+
+    // initial color
+    fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
+    showAllRGBW();
+
+    
+
+
+    // fill nightlight color into back array
+    for (uint8_t i = 0; i<NUMLEDS; i++) {
+        previous_leds[i] = nightlightColor.rgb;
+    }
+    for (uint8_t i = 0; i < NUMWHITE; i++) {
+        previous_whiteleds[i] = nightlightColor.w;
+    }
 }
 
 void loop() {
-    // FastLED.delay(1000);
-    // advanceToNextBrightnessPreset();
-    // ledcWrite(0, pgm_read_byte(&gammaVals[whiteLedBrightness]));
-    // whiteLedBrightness += whiteLedFadeDirection;
-    // if (whiteLedBrightness == 255 || whiteLedBrightness == 0) {
-    //     whiteLedFadeDirection *= -1;
-    // }
     FastLED.delay(5);
-    whiteLedsShow();
-
-    // white leds twinkle
-    // for (int i = 0; i<NUMWHITE; i++) {
-    //     if (testTwinkleArray[i] == 255) {
-    //         testTwinkleArray2[i] = -1;
-    //     } else if (testTwinkleArray[i] == 0) {
-    //         testTwinkleArray2[i] = random(100) < 5 ? 1 : 0;
-    //     }
-    //     testTwinkleArray[i] += testTwinkleArray2[i];
-    //     whiteleds[i] = pgm_read_byte(&gammaVals[testTwinkleArray[i]]);
-    // }
-    // whiteLedsShow();
-
-    // if (digitalRead(BTN1PIN) == 0) {
-    //     FastLED.delay(20);
-    //     if (digitalRead(BTN1PIN) == 0) {
-    //         advanceToNextBrightnessPreset();
-    //         while (digitalRead(BTN1PIN) == 0) {}
-    //     }
-    // }
+    showAllRGBW();
 
     // poll btns
     if ((millis() - btn_previousTickTime) >= BTN_TICK) {
@@ -108,22 +112,52 @@ void loop() {
         // poll btn 2
         bool btn2_pressed = pollBtn(BTN2PIN, &btn2_counter);
         if (btn2_pressed) {
-            whiteleds[0] = 255 - whiteleds[0]; //todo not working???
+            if (globalMode == GLOBALMODE_NORMAL) {
+                advanceToNextColorPreset();
+            }
         }
 
         // poll btn 3
         bool btn3_pressed = pollBtn(BTN3PIN, &btn3_counter);
         if (btn3_pressed) {
             // action on btn 3 press
+            toggleNightlightMode();
         }
     }
 }
 
+void setRGBWPixel(uint8_t i, RGBW color) {
+    if (i < NUMLEDS) {
+        leds[i] = color.rgb;
+    }
+    if (i < NUMWHITE) {
+        whiteleds[i] = color.w;
+    }
+}
+
+// output leds from whiteleds[] array
 void whiteLedsShow() {
+    // apply the same brightness level as the RGB strip
+    uint8_t currentBrightness = brightnessPresets[currentBrightnessPresetIndex];
+    uint8_t gammaCorrectedCurrentBrightness = pgm_read_byte(&gammaVals[currentBrightness]);
     for (int i = 0; i < NUMWHITE; i++) {
         // read value for this LED from array
         // and update LED output value
-        ledcWrite(i, whiteleds[i]);
+        ledcWrite(i, (whiteleds[i] * gammaCorrectedCurrentBrightness) / 255);
+    }
+}
+
+void showAllRGBW() {
+    FastLED.show();
+    whiteLedsShow();
+}
+
+void fillSolid_RGBW(RGBW color) {
+    for (uint8_t i = 0; i < NUMLEDS; i++) {
+        leds[i] = color.rgb;
+    }
+    for (uint8_t i = 0; i < NUMWHITE; i++) {
+        whiteleds[i] = color.w;
     }
 }
 
@@ -132,7 +166,7 @@ void whiteLedsShow() {
 // assume finished bouncing when counter is MAX_VAL (btn has been active for that long)
 bool pollBtn(uint8_t btn_pin, uint8_t *btn_counter) {
     uint8_t btn_value = digitalRead(btn_pin);
-    if (btn_value == 0) {
+    if (btn_value == LOW) {
         (*btn_counter)++;
     } else {
         *btn_counter = 0;
@@ -149,6 +183,37 @@ void advanceToNextBrightnessPreset() {
     uint8_t newOutputBrightness = brightnessPresets[currentBrightnessPresetIndex];
     FastLED.setBrightness(pgm_read_byte(&gammaVals[newOutputBrightness]));
     FastLED.show();
+}
+
+void advanceToNextColorPreset() {
+    currentColorPresetIndex++;
+    if (currentColorPresetIndex >= NUM_COLOR_PRESETS) {
+        currentColorPresetIndex = 0;
+    }
+    fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
+    showAllRGBW();
+}
+
+void toggleNightlightMode() {
+    if (globalMode == GLOBALMODE_NORMAL) {
+        globalMode = GLOBALMODE_NIGHTLIGHT;
+    } else {
+        globalMode = GLOBALMODE_NORMAL;
+    }
+
+    // swap front and back arrays
+    for (uint8_t i = 0; i < NUMLEDS; i++) {
+        CRGB tmp = previous_leds[i];
+        previous_leds[i] = leds[i];
+        leds[i] = tmp;
+    }
+    for (uint8_t i = 0; i<NUMWHITE; i++) {
+        uint8_t tmp = previous_whiteleds[i];
+        previous_whiteleds[i] = whiteleds[i];
+        whiteleds[i] = tmp;
+    }
+
+    showAllRGBW();
 }
 
 const PROGMEM uint8_t gammaVals[] = {
