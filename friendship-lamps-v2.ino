@@ -71,6 +71,10 @@ RGBW colorPresets[] = {
 uint8_t currentColorPresetIndex = 0;
 uint8_t lastSentColorPresetIndex = currentColorPresetIndex;
 
+// RGBW currentOutputColor;
+// uint32_t ledUpdate_lastTickTime = 0;
+// #define LEDUPDATE_TICK 100 // ms
+
 RGBW nightlightColor = {CRGB(0, 0, 0), 192};
 
 void setup() {
@@ -170,6 +174,38 @@ void showAllRGBW() {
     whiteLedsShow();
 }
 
+// void updatePixels() {
+//     // CRGB currentRGB = currentOutputColor.rgb;
+//     // uint8_t currentW = currentOutputColor.w;
+//     RGBW targetColor = colorPresets[currentColorPresetIndex];
+//     RGBW newOutputColor = currentOutputColor;
+//     if (currentOutputColor.rgb != targetColor.rgb && (millis() - ledUpdate_lastTickTime) > LEDUPDATE_TICK) {
+//         if (currentOutputColor.rgb.r > targetColor.rgb.r) {
+//             newOutputColor.rgb.r++;
+//         } else if (currentOutputColor.rgb.r < targetColor.rgb.r) {
+//             newOutputColor.rgb.r--;
+//         }
+//         if (currentOutputColor.rgb.g > targetColor.rgb.g) {
+//             newOutputColor.rgb.g++;
+//         } else if (currentOutputColor.rgb.g < targetColor.rgb.g) {
+//             newOutputColor.rgb.g--;
+//         }
+//         if (currentOutputColor.rgb.b > targetColor.rgb.b) {
+//             newOutputColor.rgb.b++;
+//         } else if (currentOutputColor.rgb.b < targetColor.rgb.b) {
+//             newOutputColor.rgb.b--;
+//         }
+//         if (currentOutputColor.w > targetColor.w) {
+//             newOutputColor.w++;
+//         } else if (currentOutputColor.w < targetColor.w) {
+//             newOutputColor.w--;
+//         }
+//         ledUpdate_lastTickTime = millis();
+//     }
+//     fillSolid_RGBW(newOutputColor);
+//     showAllRGBW();
+// }
+
 void fillSolid_RGBW(RGBW color) {
     for (uint8_t i = 0; i < NUMLEDS; i++) {
         leds[i] = color.rgb;
@@ -177,6 +213,7 @@ void fillSolid_RGBW(RGBW color) {
     for (uint8_t i = 0; i < NUMWHITE; i++) {
         whiteleds[i] = color.w;
     }
+    // currentOutputColor = color;
 }
 
 void timerEvent_pollBtns() {
@@ -232,7 +269,7 @@ void advanceToNextColorPreset() {
         currentColorPresetIndex = 0;
     }
     fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
-    showAllRGBW();
+    // showAllRGBW();
 }
 
 void toggleNightlightMode() {
@@ -263,7 +300,7 @@ void timerEvent_sendToOtherDevice() {
     }
 }
 
-// in separate function so we can send colour when requested, bypassing the 
+// in separate function so we can send colour when requested, bypassing the
 // check for if colour has changed
 void blynk_sendToOtherDevice() {
     blynkBridge.virtualWrite(VPIN_COLOR_SEND, currentColorPresetIndex);
