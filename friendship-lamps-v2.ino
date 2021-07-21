@@ -307,7 +307,9 @@ void blynk_sendToOtherDevice() {
     lastSentColorPresetIndex = currentColorPresetIndex;
 }
 
+// runs when first connect to the API
 BLYNK_CONNECTED() {
+    // auth token of other device to connect to
     blynkBridge.setAuthToken(BLYNK_AUTH_OTHER);
 }
 
@@ -317,6 +319,7 @@ BLYNK_WRITE(VPIN_COLOR_READ) {
     fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
 }
 
+// handle when we receive a status request from the other device
 BLYNK_WRITE(VPIN_STATUS_READ) {
     uint8_t code = param.asInt();
     if (code == BLYNK_STATUS_REQUEST_COLOR) {
@@ -324,6 +327,7 @@ BLYNK_WRITE(VPIN_STATUS_READ) {
     }
 }
 
+// gamma correction values
 const PROGMEM uint8_t gammaVals[] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1,
