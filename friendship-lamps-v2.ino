@@ -1,9 +1,9 @@
-#define THING_INDEX 0
+#define THING_INDEX 1
 
 #if THING_INDEX == 0
-#include "secrets/secrets_0.h"
+    #include "conf_0.h"
 #else
-#include "secrets/secrets_1.h"
+    #include "conf_1.h"
 #endif
 
 #include <FastLED.h>
