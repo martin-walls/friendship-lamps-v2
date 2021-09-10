@@ -1,12 +1,13 @@
-#define THING_INDEX 1
+#define THING_INDEX 0
 
 #if THING_INDEX == 0
-    #include "conf_0.h"
+#include "conf_0.h"
 #else
-    #include "conf_1.h"
+#include "conf_1.h"
 #endif
 
 #include <FastLED.h>
+#define LEDOUTPUT_TICK 10
 
 #include <WiFi.h>
 #include <WiFiManager.h>
@@ -17,6 +18,13 @@ BlynkTimer timer_sendToOtherDevice;
 BlynkTimer timer_pollBtns;
 BlynkTimer timer_ledOutputs;
 #define BLYNK_STATUS_REQUEST_COLOR 0
+#define BLYNK_STATUS_MORSECODE_PULSE_ON 1
+#define BLYNK_STATUS_MORSECODE_PULSE_OFF 2
+bool morsecode_pulse = false;
+#define MORSECODE_MIN_PULSE 50    // ms
+#define MORSECODE_MAX_PULSE 20000 // 20 s
+uint32_t morsecode_send_lastPulseMillis = 0;
+uint32_t morsecode_show_lastPulseMillis = 0;
 
 #define LEDTYPE WS2812B
 #define NUMLEDS 2
@@ -27,15 +35,20 @@ BlynkTimer timer_ledOutputs;
 uint8_t WHITEPINS[] = {25, 26};
 
 // unpressed HIGH, pressed LOW
-#define BTN1PIN 23
-#define BTN2PIN 18
-#define BTN3PIN 5
+#define BTN1PIN_BRIGHTNESS 23
+#define BTN2PIN_COLOR 18
+#define BTN3PIN_NIGHTLIGHT 5
+#define BTN4PIN_EFFECT 10
+#define BTN5PIN_MORSECODE 9
 #define BTN_TICK 1 // tick time 1 ms
 uint32_t btn_previousTickTime;
 #define BTN_MAX_BOUNCE 15 // ms
 uint16_t btn1_counter = 0;
 uint16_t btn2_counter = 0;
 uint16_t btn3_counter = 0;
+uint16_t btn4_counter = 0;
+uint16_t btn5_counter = 0;
+uint16_t btn5_offcounter = 0;
 
 #define LED_PWM_FREQUENCY 5000 /* Hz */
 #define LED_PWM_RESOLUTION 8   /* pwm resolution in bits */
@@ -103,12 +116,14 @@ void setup() {
 
     timer_sendToOtherDevice.setInterval(1000, timerEvent_sendToOtherDevice);
     timer_pollBtns.setInterval(BTN_TICK, timerEvent_pollBtns);
-    timer_ledOutputs.setInterval(10, showAllRGBW);
+    timer_ledOutputs.setInterval(LEDOUTPUT_TICK, showAllRGBW);
 
     // configure pin inputs
-    pinMode(BTN1PIN, INPUT);
-    pinMode(BTN2PIN, INPUT);
-    pinMode(BTN3PIN, INPUT);
+    pinMode(BTN1PIN_BRIGHTNESS, INPUT);
+    pinMode(BTN2PIN_COLOR, INPUT);
+    pinMode(BTN3PIN_NIGHTLIGHT, INPUT);
+    pinMode(BTN4PIN_EFFECT, INPUT);
+    pinMode(BTN5PIN_MORSECODE, INPUT);
 
     // set up a separate PWM channel for each white LED
     for (uint8_t ledIndex = 0; ledIndex < NUMWHITE; ledIndex++) {
@@ -170,6 +185,12 @@ void whiteLedsShow() {
 }
 
 void showAllRGBW() {
+    if ((morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MAX_PULSE)
+        || (!morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MIN_PULSE)) {
+        FastLED.setBrightness(255);
+    } else {
+        FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
+    }
     FastLED.show();
     whiteLedsShow();
 }
@@ -218,13 +239,13 @@ void fillSolid_RGBW(RGBW color) {
 
 void timerEvent_pollBtns() {
     // poll btn 1
-    bool btn1_pressed = pollBtn(BTN1PIN, &btn1_counter);
+    bool btn1_pressed = pollBtn(BTN1PIN_BRIGHTNESS, &btn1_counter);
     if (btn1_pressed) {
         advanceToNextBrightnessPreset();
     }
 
     // poll btn 2
-    bool btn2_pressed = pollBtn(BTN2PIN, &btn2_counter);
+    bool btn2_pressed = pollBtn(BTN2PIN_COLOR, &btn2_counter);
     if (btn2_pressed) {
         if (globalMode == GLOBALMODE_NORMAL) {
             advanceToNextColorPreset();
@@ -232,10 +253,30 @@ void timerEvent_pollBtns() {
     }
 
     // poll btn 3
-    bool btn3_pressed = pollBtn(BTN3PIN, &btn3_counter);
+    bool btn3_pressed = pollBtn(BTN3PIN_NIGHTLIGHT, &btn3_counter);
     if (btn3_pressed) {
         // action on btn 3 press
         toggleNightlightMode();
+    }
+
+    // poll btn 4
+    bool btn4_pressed = pollBtn(BTN4PIN_EFFECT, &btn4_counter);
+    if (btn4_pressed) {
+        // todo change effect locally or for both?
+    }
+
+    // poll btn 5
+    bool btn5_pressed = pollBtn(BTN5PIN_MORSECODE, &btn5_counter);
+    bool btn5_unpressed = pollBtnForValue(BTN5PIN_MORSECODE, &btn5_offcounter, HIGH);
+    if (btn5_pressed && morsecode_pulse == false) {
+        blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_ON);
+        morsecode_pulse = true;
+        morsecode_send_lastPulseMillis = millis();
+        morsecode_show_lastPulseMillis = millis();
+        // todo send pulse
+    } else if (btn5_unpressed && morsecode_pulse == true && (millis() - morsecode_send_lastPulseMillis) > MORSECODE_MIN_PULSE) {
+        blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_OFF);
+        morsecode_pulse = false;
     }
 }
 
@@ -243,8 +284,12 @@ void timerEvent_pollBtns() {
 // reset to 0 every time we read as inactive;
 // assume finished bouncing when counter is MAX_VAL (btn has been active for that long)
 bool pollBtn(uint8_t btn_pin, uint16_t *btn_counter) {
+    return pollBtnForValue(btn_pin, btn_counter, LOW);
+}
+
+bool pollBtnForValue(uint8_t btn_pin, uint16_t *btn_counter, uint8_t value) {
     uint8_t btn_value = digitalRead(btn_pin);
-    if (btn_value == LOW) {
+    if (btn_value == value) {
         (*btn_counter)++;
     } else {
         *btn_counter = 0;
@@ -324,6 +369,12 @@ BLYNK_WRITE(VPIN_STATUS_READ) {
     uint8_t code = param.asInt();
     if (code == BLYNK_STATUS_REQUEST_COLOR) {
         blynk_sendToOtherDevice();
+    } else if (code == BLYNK_STATUS_MORSECODE_PULSE_ON) {
+        // todo morse code pulse
+        morsecode_pulse = true;
+        morsecode_show_lastPulseMillis = millis();
+    } else if (code == BLYNK_STATUS_MORSECODE_PULSE_OFF) {
+        morsecode_pulse = false;
     }
 }
 
