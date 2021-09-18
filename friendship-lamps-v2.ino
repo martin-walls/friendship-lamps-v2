@@ -1,4 +1,4 @@
-#define THING_INDEX 0
+#define THING_INDEX 1
 
 #if THING_INDEX == 0
 #include "conf_0.h"
@@ -62,8 +62,8 @@ uint8_t whiteleds[NUMWHITE];
 CRGB previous_leds[NUMLEDS];
 uint8_t previous_whiteleds[NUMWHITE];
 
-#define NUM_BRIGHTNESS_PRESETS 4
-uint8_t brightnessPresets[] = {64, 128, 192, 255};
+#define NUM_BRIGHTNESS_PRESETS 3
+uint8_t brightnessPresets[] = {64, 128, 192};
 uint8_t currentBrightnessPresetIndex = 0;
 
 #define GLOBALMODE_NORMAL 0
@@ -75,12 +75,17 @@ typedef struct {
     uint8_t w;
 } RGBW;
 
-#define NUM_COLOR_PRESETS 4
+#define NUM_COLOR_PRESETS 8
 RGBW colorPresets[] = {
-    {CRGB(255, 0, 0), 0},
-    {CRGB(127, 127, 0), 64},
-    {CRGB(0, 196, 0), 255},
-    {CRGB(0, 64, 152), 128}};
+    {CRGB(255, 30, 5), 0},
+    {CRGB(244, 128, 22), 0},
+    {CRGB(255, 239, 26), 0},
+    {CRGB(12, 255, 38), 0},
+    {CRGB(37, 250, 236), 0},
+    {CRGB(4, 137, 244), 0},
+    {CRGB(144, 0, 255), 0},
+    {CRGB(255, 14, 241), 0},
+};
 uint8_t currentColorPresetIndex = 0;
 uint8_t lastSentColorPresetIndex = currentColorPresetIndex;
 
@@ -185,8 +190,7 @@ void whiteLedsShow() {
 }
 
 void showAllRGBW() {
-    if ((morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MAX_PULSE)
-        || (!morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MIN_PULSE)) {
+    if ((morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MAX_PULSE) || (!morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MIN_PULSE)) {
         FastLED.setBrightness(255);
     } else {
         FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
