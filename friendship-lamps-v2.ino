@@ -1,4 +1,4 @@
-#define THING_INDEX 1
+#define THING_INDEX 0
 
 #if THING_INDEX == 0
 #include "conf_0.h"
@@ -12,14 +12,22 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 
+#include <EEPROM.h>
+#define EEPROM_SIZE 1 // bytes
+#define EEPROM_ADDR_BRIGHTNESS_INDEX 0
+
 #include <BlynkSimpleEsp32.h>
 WidgetBridge blynkBridge(VPIN_COLOR_SEND);
 BlynkTimer timer_sendToOtherDevice;
 BlynkTimer timer_pollBtns;
 BlynkTimer timer_ledOutputs;
+#define EFFECT_UPDATE_TICK 10
+BlynkTimer timer_updateEffect;
 #define BLYNK_STATUS_REQUEST_COLOR 0
 #define BLYNK_STATUS_MORSECODE_PULSE_ON 1
 #define BLYNK_STATUS_MORSECODE_PULSE_OFF 2
+#define BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT 3
+#define BLYNK_STATUS_SWITCH_TO_NORMAL 4
 bool morsecode_pulse = false;
 #define MORSECODE_MIN_PULSE 50    // ms
 #define MORSECODE_MAX_PULSE 20000 // 20 s
@@ -27,19 +35,24 @@ uint32_t morsecode_send_lastPulseMillis = 0;
 uint32_t morsecode_show_lastPulseMillis = 0;
 
 #define LEDTYPE WS2812B
-#define NUMLEDS 2
+#define NUMLEDS 16
 // only 16 PWM channels -- so max of 16 white LED channels
-#define NUMWHITE 2
+#define NUMWHITE 8
 
 #define LEDPIN 22
-uint8_t WHITEPINS[] = {25, 26};
+uint8_t WHITEPINS[] = {25, 26, 32, 33, 27, 14, 12, 13};
 
 // unpressed HIGH, pressed LOW
-#define BTN1PIN_BRIGHTNESS 23
-#define BTN2PIN_COLOR 18
-#define BTN3PIN_NIGHTLIGHT 5
-#define BTN4PIN_EFFECT 10
-#define BTN5PIN_MORSECODE 9
+#define BTN_FRONT 10
+#define BTN_SIDE_SINGLE 9
+#define BTN_SIDE_THREE_FRONT 5
+#define BTN_SIDE_THREE_MIDDLE 18
+#define BTN_SIDE_THREE_BACK 23
+#define BTN1PIN_BRIGHTNESS BTN_FRONT
+#define BTN2PIN_COLOR BTN_SIDE_THREE_FRONT
+#define BTN3PIN_NIGHTLIGHT BTN_SIDE_SINGLE
+#define BTN4PIN_EFFECT BTN_SIDE_THREE_MIDDLE
+#define BTN5PIN_MORSECODE BTN_SIDE_THREE_BACK
 #define BTN_TICK 1 // tick time 1 ms
 uint32_t btn_previousTickTime;
 #define BTN_MAX_BOUNCE 15 // ms
@@ -64,6 +77,8 @@ uint8_t previous_whiteleds[NUMWHITE];
 
 #define NUM_BRIGHTNESS_PRESETS 3
 uint8_t brightnessPresets[] = {64, 128, 192};
+uint8_t morsecode_pulseBrightness[] = {128, 192, 255};
+uint8_t brightnessPresetsNightlight[] = {64, 128, 255};
 uint8_t currentBrightnessPresetIndex = 0;
 
 #define GLOBALMODE_NORMAL 0
@@ -95,33 +110,44 @@ uint8_t lastSentColorPresetIndex = currentColorPresetIndex;
 
 RGBW nightlightColor = {CRGB(0, 0, 0), 192};
 
+#define COLOR_OFF \
+    { CRGB(0, 0, 0), 0 }
+
+#define NUM_EFFECTS 8
+// effect ids must be numbered sequentially from 0
+#define EFFECT_NORMAL 0
+
+#define EFFECT_TWINKLE 1
+#define EFFECT_TWINKLE_SLOW 2
+#define EFFECT_TWINKLE_FLASH 3
+uint8_t twinkle_ledOffsets[NUMLEDS];
+uint8_t twinkle_step = 0;
+#define TWINKLE_STEP_INCREMENT_PER_TICK 3
+#define TWINKLE_SLOW_STEP_INCREMENT_PER_TICK 1
+#define TWINKLE_FLASH_STEP_INCREMENT_PER_TICK 3
+#define TWINKLE_FLASH_LED_ON_CUTOFF 192
+
+#define EFFECT_DISCO 4
+#define EFFECT_DISCO_SLOW 5
+#define EFFECT_DISCO_TWINKLE 6
+#define EFFECT_DISCO_FLASH 7
+uint8_t disco_currentColor = 0;
+uint8_t disco_currentInterpolation = 0;
+// how much to increment interpolation by every time we update
+// higher = faster
+#define DISCO_INTERPOLATION_INCREMENT_PER_TICK 8
+#define DISCO_SLOW_INTERPOLATION_INCREMENT_PER_TICK 2
+uint8_t currentEffect = EFFECT_NORMAL;
+uint8_t lastSentEffect = currentEffect;
+
+bool isWifiEnabled = true;
+
 void setup() {
-    // connect to wifi
-    WiFiManager wifiManager;
-    // wifiManager.resetSettings();
+    // random seed from floating analog pin
+    random16_set_seed(analogRead(35));
 
-    // try to connect to saved ssid/password
-    // else start AP for configuration
-    if (!wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD)) {
-        delay(3000);
-        // reset and try again if it didn't work
-        ESP.restart();
-        delay(5000);
-    }
-    // now connected to wifi
-
-    // blynk configuration
-    delay(1000);
-    Blynk.config(BLYNK_AUTH_THIS);
-    bool success = Blynk.connect(180);
-    if (!success) {
-        ESP.restart();
-        delay(5000);
-    }
-
-    timer_sendToOtherDevice.setInterval(1000, timerEvent_sendToOtherDevice);
-    timer_pollBtns.setInterval(BTN_TICK, timerEvent_pollBtns);
-    timer_ledOutputs.setInterval(LEDOUTPUT_TICK, showAllRGBW);
+    // start eeprom
+    EEPROM.begin(EEPROM_SIZE);
 
     // configure pin inputs
     pinMode(BTN1PIN_BRIGHTNESS, INPUT);
@@ -142,19 +168,86 @@ void setup() {
     FastLED.addLeds<LEDTYPE, LEDPIN, GRB>(leds, NUMLEDS);
     FastLED.setDither(0);
 
-    // initial brightness
+    // initial brightness from eeprom
+    currentBrightnessPresetIndex = EEPROM.read(EEPROM_ADDR_BRIGHTNESS_INDEX);
     FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
 
-    // initial color
-    // fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
-    // showAllRGBW();
+// check if wifi should be disabled
+#define WIFI_DISABLE_BTN BTN_FRONT
+#define INDICATOR_COLOR_WIFI_DISABLED \
+    { CRGB(0, 0, 255), 0 }
+    if (digitalRead(WIFI_DISABLE_BTN) == LOW) {
+        delay(250);
+        if (digitalRead(WIFI_DISABLE_BTN) == LOW) {
+            isWifiEnabled = false;
+            // flash indicator colour
+            fillSolid_RGBW(INDICATOR_COLOR_WIFI_DISABLED);
+            FastLED.show();
+            delay(250);
+            fillSolid_RGBW(COLOR_OFF);
+            FastLED.show();
+            delay(250);
 
-    // fill nightlight color into back array
-    for (uint8_t i = 0; i < NUMLEDS; i++) {
-        previous_leds[i] = nightlightColor.rgb;
+            fillSolid_RGBW(INDICATOR_COLOR_WIFI_DISABLED);
+            FastLED.show();
+            delay(250);
+            fillSolid_RGBW(COLOR_OFF);
+            FastLED.show();
+            delay(250);
+
+            fillSolid_RGBW(INDICATOR_COLOR_WIFI_DISABLED);
+            FastLED.show();
+            delay(250);
+            fillSolid_RGBW(COLOR_OFF);
+            FastLED.show();
+            delay(250);
+
+            // wait for btn to be released
+            while (digitalRead(WIFI_DISABLE_BTN) == LOW) {
+                delay(20);
+            }
+        }
     }
-    for (uint8_t i = 0; i < NUMWHITE; i++) {
-        previous_whiteleds[i] = nightlightColor.w;
+
+    // connect to wifi
+    if (isWifiEnabled) {
+        // connecting indicator
+        fillSolid_RGBW({CRGB(255, 255, 255), 0});
+        FastLED.show();
+
+        // connect to wifi
+        WiFiManager wifiManager;
+        // wifiManager.resetSettings();
+
+        // try to connect to saved ssid/password
+        // else start AP for configuration
+        if (!wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD)) {
+            delay(3000);
+            // reset and try again if it didn't work
+            ESP.restart();
+            delay(5000);
+        }
+        // now connected to wifi
+
+        // blynk configuration
+        delay(1000);
+        Blynk.config(BLYNK_AUTH_THIS);
+        bool success = Blynk.connect(180);
+        if (!success) {
+            ESP.restart();
+            delay(5000);
+        }
+    }
+
+    // setup timers
+    timer_sendToOtherDevice.setInterval(1000, timerEvent_sendToOtherDevice);
+    timer_pollBtns.setInterval(BTN_TICK, timerEvent_pollBtns);
+    timer_ledOutputs.setInterval(LEDOUTPUT_TICK, showAllRGBW);
+    timer_updateEffect.setInterval(EFFECT_UPDATE_TICK, timerEvent_updateEffect);
+
+    // initialise offsets for twinkle effect
+    for (uint8_t led = 0; led < NUMLEDS; led++) {
+        twinkle_ledOffsets[led] = random8();
     }
 
     // request color from other device (sync with other device on power on)
@@ -162,10 +255,13 @@ void setup() {
 }
 
 void loop() {
-    Blynk.run();
-    timer_ledOutputs.run();
+    if (isWifiEnabled) {
+        Blynk.run();
+        timer_sendToOtherDevice.run();
+    }
     timer_pollBtns.run();
-    timer_sendToOtherDevice.run();
+    timer_updateEffect.run();
+    timer_ledOutputs.run();
 }
 
 void setRGBWPixel(uint8_t i, RGBW color) {
@@ -174,6 +270,16 @@ void setRGBWPixel(uint8_t i, RGBW color) {
     }
     if (i < NUMWHITE) {
         whiteleds[i] = color.w;
+    }
+}
+
+void setRGBWPixelScaled(uint8_t i, RGBW color, uint8_t scaleTo) {
+    if (i < NUMLEDS) {
+        leds[i] = color.rgb;
+        leds[i].nscale8(scaleTo);
+    }
+    if (i < NUMWHITE) {
+        whiteleds[i] = (uint8_t)((double)color.w * (scaleTo / 255.0));
     }
 }
 
@@ -190,13 +296,25 @@ void whiteLedsShow() {
 }
 
 void showAllRGBW() {
-    if ((morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MAX_PULSE) || (!morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MIN_PULSE)) {
-        FastLED.setBrightness(255);
+    // set correct brightness
+    if (shouldShowMorsecodePulse()) {
+        FastLED.setBrightness(pgm_read_byte(&gammaVals[morsecode_pulseBrightness[currentBrightnessPresetIndex]]));
     } else {
-        FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
+        setBrightnessToCurrentlySelectedLevel();
     }
     FastLED.show();
     whiteLedsShow();
+}
+
+// set brightness specified by current brightness level
+void setBrightnessToCurrentlySelectedLevel() {
+    uint8_t brightness = (globalMode == GLOBALMODE_NIGHTLIGHT ? brightnessPresetsNightlight : brightnessPresets)[currentBrightnessPresetIndex];
+    FastLED.setBrightness(pgm_read_byte(&gammaVals[brightness]));
+}
+
+bool shouldShowMorsecodePulse() {
+    return (morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MAX_PULSE)      // pulse on and before max pulse length timeout
+           || (!morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MIN_PULSE); // pulse off but haven't got to min pulse length yet so keep it on till then
 }
 
 // void updatePixels() {
@@ -241,6 +359,116 @@ void fillSolid_RGBW(RGBW color) {
     // currentOutputColor = color;
 }
 
+void timerEvent_updateEffect() {
+    if (globalMode == GLOBALMODE_NIGHTLIGHT) {
+        fillSolid_RGBW(nightlightColor);
+        return;
+    }
+    switch (currentEffect) {
+    default:
+    case EFFECT_NORMAL: {
+        fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
+        break;
+    }
+    case EFFECT_TWINKLE:
+    case EFFECT_TWINKLE_SLOW: {
+        for (uint8_t led = 0; led < NUMLEDS; led++) {
+            uint8_t thisLedOffset = twinkle_ledOffsets[led];
+            uint8_t brightness = sin8(twinkle_step + thisLedOffset);
+            setRGBWPixelScaled(led, colorPresets[currentColorPresetIndex], brightness);
+        }
+        if (currentEffect == EFFECT_TWINKLE) {
+            twinkle_step += TWINKLE_STEP_INCREMENT_PER_TICK;
+        } else {
+            twinkle_step += TWINKLE_SLOW_STEP_INCREMENT_PER_TICK;
+        }
+        break;
+    }
+    case EFFECT_TWINKLE_FLASH: {
+        for (uint8_t led = 0; led < NUMLEDS; led++) {
+            uint8_t thisLedOffset = twinkle_ledOffsets[led];
+            uint8_t wave = triwave8(twinkle_step + thisLedOffset);
+            if (wave >= TWINKLE_FLASH_LED_ON_CUTOFF) {
+                setRGBWPixel(led, colorPresets[currentColorPresetIndex]);
+            } else {
+                setRGBWPixel(led, COLOR_OFF);
+            }
+        }
+        twinkle_step += TWINKLE_FLASH_STEP_INCREMENT_PER_TICK;
+        break;
+    }
+    case EFFECT_DISCO:
+    case EFFECT_DISCO_SLOW: {
+        RGBW currentDiscoColor = getCurrentDiscoColor();
+        fillSolid_RGBW(currentDiscoColor);
+        if (currentEffect == EFFECT_DISCO) {
+            incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
+        } else {
+            incrementDiscoColor(DISCO_SLOW_INTERPOLATION_INCREMENT_PER_TICK);
+        }
+        break;
+    }
+    case EFFECT_DISCO_TWINKLE: {
+        RGBW currentDiscoColor = getCurrentDiscoColor();
+        for (uint8_t led = 0; led < NUMLEDS; led++) {
+            uint8_t thisLedOffset = twinkle_ledOffsets[led];
+            uint8_t brightness = sin8(twinkle_step + thisLedOffset);
+            setRGBWPixelScaled(led, currentDiscoColor, brightness);
+        }
+        twinkle_step += TWINKLE_STEP_INCREMENT_PER_TICK;
+        incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
+        break;
+    }
+    case EFFECT_DISCO_FLASH: {
+        RGBW currentDiscoColor = getCurrentDiscoColor();
+        for (uint8_t led = 0; led < NUMLEDS; led++) {
+            uint8_t thisLedOffset = twinkle_ledOffsets[led];
+            uint8_t wave = triwave8(twinkle_step + thisLedOffset);
+            if (wave >= TWINKLE_FLASH_LED_ON_CUTOFF) {
+                setRGBWPixel(led, currentDiscoColor);
+            } else {
+                setRGBWPixel(led, COLOR_OFF);
+            }
+        }
+        twinkle_step += TWINKLE_FLASH_STEP_INCREMENT_PER_TICK;
+        incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
+        break;
+    }
+    }
+}
+
+RGBW getCurrentDiscoColor() {
+    return interpolateColors(
+        colorPresets[disco_currentColor],
+        colorPresets[disco_currentColor == NUM_COLOR_PRESETS - 1 ? 0 : disco_currentColor + 1], // check if at last colour, if so then wrap around
+        disco_currentInterpolation);
+}
+
+void incrementDiscoColor(uint8_t increment) {
+    if (disco_currentInterpolation <= 254 - increment) {
+        disco_currentInterpolation += increment;
+    } else {
+        disco_currentColor++;
+        if (disco_currentColor >= NUM_COLOR_PRESETS) {
+            disco_currentColor = 0;
+        }
+        disco_currentInterpolation = 0;
+    }
+}
+
+// interpolate between colours a and b
+// ratio determines how far between the colours to interpolate; 0 is all the way to a, 255 is all the way to b
+RGBW interpolateColors(RGBW a, RGBW b, uint8_t ratio) {
+    double delta_r = (b.rgb.r - a.rgb.r) * ratio / 255;
+    double delta_g = (b.rgb.g - a.rgb.g) * ratio / 255;
+    double delta_b = (b.rgb.b - a.rgb.b) * ratio / 255;
+    double delta_w = (b.w - a.w) * ratio / 255;
+    return {CRGB(a.rgb.r + ((uint8_t)delta_r),
+                 a.rgb.g + ((uint8_t)delta_g),
+                 a.rgb.b + ((uint8_t)delta_b)),
+            a.w + ((uint8_t)delta_w)};
+}
+
 void timerEvent_pollBtns() {
     // poll btn 1
     bool btn1_pressed = pollBtn(BTN1PIN_BRIGHTNESS, &btn1_counter);
@@ -266,21 +494,26 @@ void timerEvent_pollBtns() {
     // poll btn 4
     bool btn4_pressed = pollBtn(BTN4PIN_EFFECT, &btn4_counter);
     if (btn4_pressed) {
+        if (globalMode == GLOBALMODE_NORMAL) {
+            advanceToNextEffect();
+        }
         // todo change effect locally or for both?
     }
 
     // poll btn 5
-    bool btn5_pressed = pollBtn(BTN5PIN_MORSECODE, &btn5_counter);
-    bool btn5_unpressed = pollBtnForValue(BTN5PIN_MORSECODE, &btn5_offcounter, HIGH);
-    if (btn5_pressed && morsecode_pulse == false) {
-        blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_ON);
-        morsecode_pulse = true;
-        morsecode_send_lastPulseMillis = millis();
-        morsecode_show_lastPulseMillis = millis();
-        // todo send pulse
-    } else if (btn5_unpressed && morsecode_pulse == true && (millis() - morsecode_send_lastPulseMillis) > MORSECODE_MIN_PULSE) {
-        blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_OFF);
-        morsecode_pulse = false;
+    if (isWifiEnabled) {
+        bool btn5_pressed = pollBtn(BTN5PIN_MORSECODE, &btn5_counter);
+        bool btn5_unpressed = pollBtnForValue(BTN5PIN_MORSECODE, &btn5_offcounter, HIGH);
+        if (btn5_pressed && morsecode_pulse == false) {
+            blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_ON);
+            morsecode_pulse = true;
+            morsecode_send_lastPulseMillis = millis();
+            morsecode_show_lastPulseMillis = millis();
+            // todo send pulse
+        } else if (btn5_unpressed && morsecode_pulse == true && (millis() - morsecode_send_lastPulseMillis) > MORSECODE_MIN_PULSE) {
+            blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_OFF);
+            morsecode_pulse = false;
+        }
     }
 }
 
@@ -307,9 +540,12 @@ void advanceToNextBrightnessPreset() {
     if (currentBrightnessPresetIndex >= NUM_BRIGHTNESS_PRESETS) {
         currentBrightnessPresetIndex = 0;
     }
-    uint8_t newOutputBrightness = brightnessPresets[currentBrightnessPresetIndex];
-    FastLED.setBrightness(pgm_read_byte(&gammaVals[newOutputBrightness]));
-    FastLED.show();
+    writeBrightnessIndexToEEPROM();
+}
+
+void writeBrightnessIndexToEEPROM() {
+    EEPROM.write(EEPROM_ADDR_BRIGHTNESS_INDEX, currentBrightnessPresetIndex);
+    EEPROM.commit();
 }
 
 void advanceToNextColorPreset() {
@@ -324,28 +560,38 @@ void advanceToNextColorPreset() {
 void toggleNightlightMode() {
     if (globalMode == GLOBALMODE_NORMAL) {
         globalMode = GLOBALMODE_NIGHTLIGHT;
+        blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT);
     } else {
         globalMode = GLOBALMODE_NORMAL;
+        blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NORMAL);
     }
 
-    // swap front and back arrays
-    for (uint8_t i = 0; i < NUMLEDS; i++) {
-        CRGB tmp = previous_leds[i];
-        previous_leds[i] = leds[i];
-        leds[i] = tmp;
-    }
-    for (uint8_t i = 0; i < NUMWHITE; i++) {
-        uint8_t tmp = previous_whiteleds[i];
-        previous_whiteleds[i] = whiteleds[i];
-        whiteleds[i] = tmp;
-    }
+    // // swap front and back arrays
+    // for (uint8_t i = 0; i < NUMLEDS; i++) {
+    //     CRGB tmp = previous_leds[i];
+    //     previous_leds[i] = leds[i];
+    //     leds[i] = tmp;
+    // }
+    // for (uint8_t i = 0; i < NUMWHITE; i++) {
+    //     uint8_t tmp = previous_whiteleds[i];
+    //     previous_whiteleds[i] = whiteleds[i];
+    //     whiteleds[i] = tmp;
+    // }
+}
 
-    showAllRGBW();
+void advanceToNextEffect() {
+    currentEffect++;
+    if (currentEffect >= NUM_EFFECTS) {
+        currentEffect = 0;
+    }
 }
 
 void timerEvent_sendToOtherDevice() {
     if (currentColorPresetIndex != lastSentColorPresetIndex) {
         blynk_sendToOtherDevice();
+    }
+    if (currentEffect != lastSentEffect) {
+        blynk_sendEffectToOtherDevice();
     }
 }
 
@@ -356,30 +602,54 @@ void blynk_sendToOtherDevice() {
     lastSentColorPresetIndex = currentColorPresetIndex;
 }
 
+void blynk_sendEffectToOtherDevice() {
+    blynkBridge.virtualWrite(VPIN_EFFECT_SEND, currentEffect);
+    lastSentEffect = currentEffect;
+}
+
 // runs when first connect to the API
 BLYNK_CONNECTED() {
     // auth token of other device to connect to
     blynkBridge.setAuthToken(BLYNK_AUTH_OTHER);
 }
 
-// handle when we receive an update from the other device
+// handle when we receive a color update from the other device
 BLYNK_WRITE(VPIN_COLOR_READ) {
     currentColorPresetIndex = param.asInt();
-    fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
 }
 
 // handle when we receive a status request from the other device
 BLYNK_WRITE(VPIN_STATUS_READ) {
     uint8_t code = param.asInt();
-    if (code == BLYNK_STATUS_REQUEST_COLOR) {
+
+    switch (code) {
+    case BLYNK_STATUS_REQUEST_COLOR: {
         blynk_sendToOtherDevice();
-    } else if (code == BLYNK_STATUS_MORSECODE_PULSE_ON) {
-        // todo morse code pulse
+        break;
+    }
+    case BLYNK_STATUS_MORSECODE_PULSE_ON: {
         morsecode_pulse = true;
         morsecode_show_lastPulseMillis = millis();
-    } else if (code == BLYNK_STATUS_MORSECODE_PULSE_OFF) {
-        morsecode_pulse = false;
+        break;
     }
+    case BLYNK_STATUS_MORSECODE_PULSE_OFF: {
+        morsecode_pulse = false;
+        break;
+    }
+    case BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT: {
+        globalMode = GLOBALMODE_NIGHTLIGHT;
+        break;
+    }
+    case BLYNK_STATUS_SWITCH_TO_NORMAL: {
+        globalMode = GLOBALMODE_NORMAL;
+        break;
+    }
+    }
+}
+
+// handle when we receive an effect update from the other device
+BLYNK_WRITE(VPIN_EFFECT_READ) {
+    currentEffect = param.asInt();
 }
 
 // gamma correction values

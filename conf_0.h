@@ -8,5 +8,8 @@
 #define VPIN_STATUS_SEND V2
 #define VPIN_STATUS_READ V3
 
+#define VPIN_EFFECT_SEND V4
+#define VPIN_EFFECT_READ V5
+
 #include "secrets/secrets_common.h"
 #include "secrets/secrets_0.h"
