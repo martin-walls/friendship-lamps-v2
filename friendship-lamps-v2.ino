@@ -1,3 +1,6 @@
+// #define BLYNK_TEMPLATE_ID "TMPLK4ed64ko"
+// #define BLYNK_DEVICE_NAME "Friendship Lamps"
+
 #define THING_INDEX 0
 
 #if THING_INDEX == 0
@@ -103,6 +106,8 @@ RGBW colorPresets[] = {
 };
 uint8_t currentColorPresetIndex = 0;
 uint8_t lastSentColorPresetIndex = currentColorPresetIndex;
+bool usingCustomColor = false;
+RGBW customColor = {CRGB(0,0,0),0};
 
 // RGBW currentOutputColor;
 // uint32_t ledUpdate_lastTickTime = 0;
@@ -359,6 +364,11 @@ void fillSolid_RGBW(RGBW color) {
     // currentOutputColor = color;
 }
 
+RGBW getCurrentColor() {
+    if (usingCustomColor) return customColor;
+    else return colorPresets[currentColorPresetIndex];
+}
+
 void timerEvent_updateEffect() {
     if (globalMode == GLOBALMODE_NIGHTLIGHT) {
         fillSolid_RGBW(nightlightColor);
@@ -367,15 +377,16 @@ void timerEvent_updateEffect() {
     switch (currentEffect) {
     default:
     case EFFECT_NORMAL: {
-        fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
+        fillSolid_RGBW(getCurrentColor());
         break;
     }
     case EFFECT_TWINKLE:
     case EFFECT_TWINKLE_SLOW: {
+        RGBW color = getCurrentColor();
         for (uint8_t led = 0; led < NUMLEDS; led++) {
             uint8_t thisLedOffset = twinkle_ledOffsets[led];
             uint8_t brightness = sin8(twinkle_step + thisLedOffset);
-            setRGBWPixelScaled(led, colorPresets[currentColorPresetIndex], brightness);
+            setRGBWPixelScaled(led, color, brightness);
         }
         if (currentEffect == EFFECT_TWINKLE) {
             twinkle_step += TWINKLE_STEP_INCREMENT_PER_TICK;
@@ -385,11 +396,12 @@ void timerEvent_updateEffect() {
         break;
     }
     case EFFECT_TWINKLE_FLASH: {
+        RGBW color = getCurrentColor();
         for (uint8_t led = 0; led < NUMLEDS; led++) {
             uint8_t thisLedOffset = twinkle_ledOffsets[led];
             uint8_t wave = triwave8(twinkle_step + thisLedOffset);
             if (wave >= TWINKLE_FLASH_LED_ON_CUTOFF) {
-                setRGBWPixel(led, colorPresets[currentColorPresetIndex]);
+                setRGBWPixel(led, color);
             } else {
                 setRGBWPixel(led, COLOR_OFF);
             }
@@ -497,7 +509,6 @@ void timerEvent_pollBtns() {
         if (globalMode == GLOBALMODE_NORMAL) {
             advanceToNextEffect();
         }
-        // todo change effect locally or for both?
     }
 
     // poll btn 5
@@ -509,7 +520,6 @@ void timerEvent_pollBtns() {
             morsecode_pulse = true;
             morsecode_send_lastPulseMillis = millis();
             morsecode_show_lastPulseMillis = millis();
-            // todo send pulse
         } else if (btn5_unpressed && morsecode_pulse == true && (millis() - morsecode_send_lastPulseMillis) > MORSECODE_MIN_PULSE) {
             blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_OFF);
             morsecode_pulse = false;
@@ -555,6 +565,7 @@ void advanceToNextColorPreset() {
     }
     fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
     // showAllRGBW();
+    usingCustomColor = false;
 }
 
 void toggleNightlightMode() {
@@ -593,6 +604,7 @@ void timerEvent_sendToOtherDevice() {
     if (currentEffect != lastSentEffect) {
         blynk_sendEffectToOtherDevice();
     }
+    blynk_updateAppColorLed(getCurrentColor());
 }
 
 // in separate function so we can send colour when requested, bypassing the
@@ -607,6 +619,14 @@ void blynk_sendEffectToOtherDevice() {
     lastSentEffect = currentEffect;
 }
 
+void blynk_updateAppColorLed(RGBW color) {
+    char hex[8];
+    sprintf(hex, "#%X%X%X\0", color.rgb.r, color.rgb.g, color.rgb.b);
+    String hexString = String(hex);
+    Blynk.setProperty(VPIN_APP_COLOR_LED, "color", hexString);
+    Blynk.virtualWrite(VPIN_APP_COLOR_LED, 255);
+}
+
 // runs when first connect to the API
 BLYNK_CONNECTED() {
     // auth token of other device to connect to
@@ -616,6 +636,7 @@ BLYNK_CONNECTED() {
 // handle when we receive a color update from the other device
 BLYNK_WRITE(VPIN_COLOR_READ) {
     currentColorPresetIndex = param.asInt();
+    usingCustomColor = false;
 }
 
 // handle when we receive a status request from the other device
@@ -650,6 +671,14 @@ BLYNK_WRITE(VPIN_STATUS_READ) {
 // handle when we receive an effect update from the other device
 BLYNK_WRITE(VPIN_EFFECT_READ) {
     currentEffect = param.asInt();
+}
+
+BLYNK_WRITE(VPIN_ZERGBA_READ) {
+    customColor.rgb.r = param[0].asInt();
+    customColor.rgb.g = param[1].asInt();
+    customColor.rgb.b = param[2].asInt();
+
+    usingCustomColor = true;
 }
 
 // gamma correction values
