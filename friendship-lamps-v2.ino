@@ -182,8 +182,10 @@ void setup() {
 
   // check if wifi should be disabled
 #define WIFI_DISABLE_BTN BTN_FRONT
-#define INDICATOR_COLOR_WIFI_DISABLED \
-  { CRGB(0, 0, 255), 0 }
+#define INDICATOR_COLOR_WIFI_DISABLED { CRGB(0, 0, 255), 0 }
+#define WIFI_RESET_BTN BTN_SIDE_SINGLE
+#define INDICATOR_COLOR_WIFI_RESET { CRGB(0, 255, 0), 0 }
+  bool resetWifi = false;
   if (digitalRead(WIFI_DISABLE_BTN) == LOW) {
     delay(250);
     if (digitalRead(WIFI_DISABLE_BTN) == LOW) {
@@ -215,6 +217,16 @@ void setup() {
         delay(20);
       }
     }
+  } else if (digitalRead(WIFI_RESET_BTN) == LOW) {
+    delay(250);
+    if (digitalRead(WIFI_RESET_BTN) == LOW) {
+      resetWifi = true;
+      fillSolid_RGBW(INDICATOR_COLOR_WIFI_RESET);
+      FastLED.show();
+      delay(350);
+      fillSolid_RGBW(COLOR_OFF);
+      FastLED.show();
+    }
   }
 
   // connect to wifi
@@ -225,7 +237,10 @@ void setup() {
 
     // connect to wifi
     WiFiManager wifiManager;
-    // wifiManager.resetSettings();
+    
+    if (resetWifi) {
+      wifiManager.resetSettings();
+    }
 
     // try to connect to saved ssid/password
     // else start AP for configuration
@@ -264,6 +279,10 @@ void setup() {
 
 void loop() {
   if (isWifiEnabled) {
+    bool wifiSuccess = false;
+    while (!wifiSuccess) {
+      wifiSuccess = ensureWifiConnected();
+    }
     Blynk.run();
     timer_sendToOtherDevice.run();
   }
@@ -686,11 +705,24 @@ BLYNK_WRITE(VPIN_ZERGBA_READ) {
   usingCustomColor = true;
 }
 
+#define CONNECT_TIMEOUT 30 // seconds to wait to connect before booting local AP
+#define AP_TIMEOUT 120     // seconds to wait in the config portal before trying again
 bool ensureWifiConnected() {
   // do nothing if already connected
   if (WiFi.status() != WL_CONNECTED) {
+    fillSolid_RGBW({CRGB(255,0,0), 0});
+    showAllRGBW();
+    WiFiManager wifiManager;
 
+    wifiManager.setConnectTimeout(CONNECT_TIMEOUT);
+    wifiManager.setTimeout(AP_TIMEOUT);
+
+    // try to connect again; blocks until WiFi is connected, or time out
+    wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD);
   }
+
+  // return false if still not connected, so we can try again
+  return WiFi.status() == WL_CONNECTED;
 }
 
 // gamma correction values
