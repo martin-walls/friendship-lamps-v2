@@ -400,76 +400,82 @@ void timerEvent_updateEffect() {
   }
   switch (currentEffect) {
     default:
-    case EFFECT_NORMAL: {
-                          fillSolid_RGBW(getCurrentColor());
-                          break;
-                        }
+    case EFFECT_NORMAL:
+      {
+        fillSolid_RGBW(getCurrentColor());
+        break;
+      }
     case EFFECT_TWINKLE:
-    case EFFECT_TWINKLE_SLOW: {
-                                RGBW color = getCurrentColor();
-                                for (uint8_t led = 0; led < NUMLEDS; led++) {
-                                  uint8_t thisLedOffset = twinkle_ledOffsets[led];
-                                  uint8_t brightness = sin8(twinkle_step + thisLedOffset);
-                                  setRGBWPixelScaled(led, color, brightness);
-                                }
-                                if (currentEffect == EFFECT_TWINKLE) {
-                                  twinkle_step += TWINKLE_STEP_INCREMENT_PER_TICK;
-                                } else {
-                                  twinkle_step += TWINKLE_SLOW_STEP_INCREMENT_PER_TICK;
-                                }
-                                break;
-                              }
-    case EFFECT_TWINKLE_FLASH: {
-                                 RGBW color = getCurrentColor();
-                                 for (uint8_t led = 0; led < NUMLEDS; led++) {
-                                   uint8_t thisLedOffset = twinkle_ledOffsets[led];
-                                   uint8_t wave = triwave8(twinkle_step + thisLedOffset);
-                                   if (wave >= TWINKLE_FLASH_LED_ON_CUTOFF) {
-                                     setRGBWPixel(led, color);
-                                   } else {
-                                     setRGBWPixel(led, COLOR_OFF);
-                                   }
-                                 }
-                                 twinkle_step += TWINKLE_FLASH_STEP_INCREMENT_PER_TICK;
-                                 break;
-                               }
+    case EFFECT_TWINKLE_SLOW:
+      {
+        RGBW color = getCurrentColor();
+        for (uint8_t led = 0; led < NUMLEDS; led++) {
+          uint8_t thisLedOffset = twinkle_ledOffsets[led];
+          uint8_t brightness = sin8(twinkle_step + thisLedOffset);
+          setRGBWPixelScaled(led, color, brightness);
+        }
+        if (currentEffect == EFFECT_TWINKLE) {
+          twinkle_step += TWINKLE_STEP_INCREMENT_PER_TICK;
+        } else {
+          twinkle_step += TWINKLE_SLOW_STEP_INCREMENT_PER_TICK;
+        }
+        break;
+      }
+    case EFFECT_TWINKLE_FLASH:
+      {
+        RGBW color = getCurrentColor();
+        for (uint8_t led = 0; led < NUMLEDS; led++) {
+          uint8_t thisLedOffset = twinkle_ledOffsets[led];
+          uint8_t wave = triwave8(twinkle_step + thisLedOffset);
+          if (wave >= TWINKLE_FLASH_LED_ON_CUTOFF) {
+            setRGBWPixel(led, color);
+          } else {
+            setRGBWPixel(led, COLOR_OFF);
+          }
+        }
+        twinkle_step += TWINKLE_FLASH_STEP_INCREMENT_PER_TICK;
+        break;
+      }
     case EFFECT_DISCO:
-    case EFFECT_DISCO_SLOW: {
-                              RGBW currentDiscoColor = getCurrentDiscoColor();
-                              fillSolid_RGBW(currentDiscoColor);
-                              if (currentEffect == EFFECT_DISCO) {
-                                incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
-                              } else {
-                                incrementDiscoColor(DISCO_SLOW_INTERPOLATION_INCREMENT_PER_TICK);
-                              }
-                              break;
-                            }
-    case EFFECT_DISCO_TWINKLE: {
-                                 RGBW currentDiscoColor = getCurrentDiscoColor();
-                                 for (uint8_t led = 0; led < NUMLEDS; led++) {
-                                   uint8_t thisLedOffset = twinkle_ledOffsets[led];
-                                   uint8_t brightness = sin8(twinkle_step + thisLedOffset);
-                                   setRGBWPixelScaled(led, currentDiscoColor, brightness);
-                                 }
-                                 twinkle_step += TWINKLE_STEP_INCREMENT_PER_TICK;
-                                 incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
-                                 break;
-                               }
-    case EFFECT_DISCO_FLASH: {
-                               RGBW currentDiscoColor = getCurrentDiscoColor();
-                               for (uint8_t led = 0; led < NUMLEDS; led++) {
-                                 uint8_t thisLedOffset = twinkle_ledOffsets[led];
-                                 uint8_t wave = triwave8(twinkle_step + thisLedOffset);
-                                 if (wave >= TWINKLE_FLASH_LED_ON_CUTOFF) {
-                                   setRGBWPixel(led, currentDiscoColor);
-                                 } else {
-                                   setRGBWPixel(led, COLOR_OFF);
-                                 }
-                               }
-                               twinkle_step += TWINKLE_FLASH_STEP_INCREMENT_PER_TICK;
-                               incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
-                               break;
-                             }
+    case EFFECT_DISCO_SLOW:
+      {
+        RGBW currentDiscoColor = getCurrentDiscoColor();
+        fillSolid_RGBW(currentDiscoColor);
+        if (currentEffect == EFFECT_DISCO) {
+          incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
+        } else {
+          incrementDiscoColor(DISCO_SLOW_INTERPOLATION_INCREMENT_PER_TICK);
+        }
+        break;
+      }
+    case EFFECT_DISCO_TWINKLE:
+      {
+        RGBW currentDiscoColor = getCurrentDiscoColor();
+        for (uint8_t led = 0; led < NUMLEDS; led++) {
+          uint8_t thisLedOffset = twinkle_ledOffsets[led];
+          uint8_t brightness = sin8(twinkle_step + thisLedOffset);
+          setRGBWPixelScaled(led, currentDiscoColor, brightness);
+        }
+        twinkle_step += TWINKLE_STEP_INCREMENT_PER_TICK;
+        incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
+        break;
+      }
+    case EFFECT_DISCO_FLASH: 
+      {
+        RGBW currentDiscoColor = getCurrentDiscoColor();
+        for (uint8_t led = 0; led < NUMLEDS; led++) {
+          uint8_t thisLedOffset = twinkle_ledOffsets[led];
+          uint8_t wave = triwave8(twinkle_step + thisLedOffset);
+          if (wave >= TWINKLE_FLASH_LED_ON_CUTOFF) {
+            setRGBWPixel(led, currentDiscoColor);
+          } else {
+            setRGBWPixel(led, COLOR_OFF);
+          }
+        }
+        twinkle_step += TWINKLE_FLASH_STEP_INCREMENT_PER_TICK;
+        incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
+        break;
+      }
   }
 }
 
