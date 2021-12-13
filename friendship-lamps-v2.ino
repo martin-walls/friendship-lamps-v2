@@ -10,6 +10,7 @@
 #endif
 
 #include "gamma.h"
+#include "buttons.h"
 
 #include <FastLED.h>
 #define LEDOUTPUT_TICK 10
@@ -51,27 +52,6 @@ uint32_t morsecode_show_lastPulseMillis = 0;
 
 #define LEDPIN 22
 uint8_t WHITEPINS[] = {25, 26, 32, 33, 27, 14, 12, 13};
-
-// unpressed HIGH, pressed LOW
-#define BTN_FRONT 10
-#define BTN_SIDE_SINGLE 9
-#define BTN_SIDE_THREE_FRONT 5
-#define BTN_SIDE_THREE_MIDDLE 18
-#define BTN_SIDE_THREE_BACK 23
-#define BTN1PIN_BRIGHTNESS BTN_FRONT
-#define BTN2PIN_COLOR BTN_SIDE_THREE_FRONT
-#define BTN3PIN_NIGHTLIGHT BTN_SIDE_SINGLE
-#define BTN4PIN_EFFECT BTN_SIDE_THREE_MIDDLE
-#define BTN5PIN_MORSECODE BTN_SIDE_THREE_BACK
-#define BTN_TICK 1 // tick time 1 ms
-uint32_t btn_previousTickTime;
-#define BTN_MAX_BOUNCE 15 // ms
-uint16_t btn1_counter = 0;
-uint16_t btn2_counter = 0;
-uint16_t btn3_counter = 0;
-uint16_t btn4_counter = 0;
-uint16_t btn5_counter = 0;
-uint16_t btn5_offcounter = 0;
 
 #define LED_PWM_FREQUENCY 5000 /* Hz */
 #define LED_PWM_RESOLUTION 8   /* pwm resolution in bits */
@@ -163,12 +143,7 @@ void setup() {
   // start eeprom
   EEPROM.begin(EEPROM_SIZE);
 
-  // configure pin inputs
-  pinMode(BTN1PIN_BRIGHTNESS, INPUT);
-  pinMode(BTN2PIN_COLOR, INPUT);
-  pinMode(BTN3PIN_NIGHTLIGHT, INPUT);
-  pinMode(BTN4PIN_EFFECT, INPUT);
-  pinMode(BTN5PIN_MORSECODE, INPUT);
+  Btns::setupBtns();
 
   // set up a separate PWM channel for each white LED
   for (uint8_t ledIndex = 0; ledIndex < NUMWHITE; ledIndex++) {
@@ -187,14 +162,12 @@ void setup() {
   FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
 
   // check if wifi should be disabled
-#define WIFI_DISABLE_BTN BTN_FRONT
 #define INDICATOR_COLOR_WIFI_DISABLED { CRGB(0, 0, 255), 0 }
-#define WIFI_RESET_BTN BTN_SIDE_SINGLE
 #define INDICATOR_COLOR_WIFI_RESET { CRGB(0, 255, 0), 0 }
   bool resetWifi = false;
-  if (digitalRead(WIFI_DISABLE_BTN) == LOW) {
+  if (Btns::isBtnPressed(Btns::wifiDisableBtn)) {
     delay(250);
-    if (digitalRead(WIFI_DISABLE_BTN) == LOW) {
+    if (Btns::isBtnPressed(Btns::wifiDisableBtn)) {
       isWifiEnabled = false;
       // flash indicator colour
       fillSolid_RGBW(INDICATOR_COLOR_WIFI_DISABLED);
@@ -218,20 +191,19 @@ void setup() {
       FastLED.show();
       delay(250);
 
-      // wait for btn to be released
-      while (digitalRead(WIFI_DISABLE_BTN) == LOW) {
-        delay(20);
-      }
+      Btns::waitForBtnRelease(Btns::wifiDisableBtn);
     }
-  } else if (digitalRead(WIFI_RESET_BTN) == LOW) {
+  } else if (Btns::isBtnPressed(Btns::wifiResetBtn)) {
     delay(250);
-    if (digitalRead(WIFI_RESET_BTN) == LOW) {
+    if (Btns::isBtnPressed(Btns::wifiResetBtn)) {
       resetWifi = true;
       fillSolid_RGBW(INDICATOR_COLOR_WIFI_RESET);
       FastLED.show();
       delay(350);
       fillSolid_RGBW(COLOR_OFF);
       FastLED.show();
+
+      waitForBtnRelease(Btns::wifiResetBtn);
     }
   }
 
@@ -284,7 +256,7 @@ void setup() {
 
   // setup timers
   timer_sendToOtherDevice.setInterval(SEND_TO_OTHER_DEVICE_TICK, timerEvent_sendToOtherDevice);
-  timer_pollBtns.setInterval(BTN_TICK, timerEvent_pollBtns);
+  timer_pollBtns.setInterval(Btns::TICK, timerEvent_pollBtns);
   timer_ledOutputs.setInterval(LEDOUTPUT_TICK, showAllRGBW);
   timer_updateEffect.setInterval(EFFECT_UPDATE_TICK, timerEvent_updateEffect);
 
@@ -532,13 +504,13 @@ RGBW interpolateColors(RGBW a, RGBW b, uint8_t ratio) {
 
 void timerEvent_pollBtns() {
   // poll btn 1
-  bool btn1_pressed = pollBtn(BTN1PIN_BRIGHTNESS, &btn1_counter);
+  bool btn1_pressed = Btns::pollBtn(Btns::brightnessBtn);
   if (btn1_pressed) {
     advanceToNextBrightnessPreset();
   }
 
   // poll btn 2
-  bool btn2_pressed = pollBtn(BTN2PIN_COLOR, &btn2_counter);
+  bool btn2_pressed = Btns::pollBtn(Btns::colorBtn);
   if (btn2_pressed) {
     if (globalMode == GLOBALMODE_NORMAL) {
       advanceToNextColorPreset();
@@ -546,14 +518,14 @@ void timerEvent_pollBtns() {
   }
 
   // poll btn 3
-  bool btn3_pressed = pollBtn(BTN3PIN_NIGHTLIGHT, &btn3_counter);
+  bool btn3_pressed = Btns::pollBtn(Btns::nightlightBtn);
   if (btn3_pressed) {
     // action on btn 3 press
     toggleNightlightMode();
   }
 
   // poll btn 4
-  bool btn4_pressed = pollBtn(BTN4PIN_EFFECT, &btn4_counter);
+  bool btn4_pressed = Btns::pollBtn(Btns::effectBtn);
   if (btn4_pressed) {
     if (globalMode == GLOBALMODE_NORMAL) {
       advanceToNextEffect();
@@ -562,8 +534,8 @@ void timerEvent_pollBtns() {
 
   // poll btn 5
   if (isWifiEnabled) {
-    bool btn5_pressed = pollBtn(BTN5PIN_MORSECODE, &btn5_counter);
-    bool btn5_unpressed = pollBtnForValue(BTN5PIN_MORSECODE, &btn5_offcounter, HIGH);
+    bool btn5_pressed = Btns::pollBtn(Btns::morsecodeBtn);
+    bool btn5_unpressed = Btns::pollBtnForValue(Btns::morsecodeBtn, Btns::UNPRESSED);
     if (btn5_pressed && morsecode_pulse == false) {
       blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_ON, effectVersion);
       morsecode_pulse = true;
@@ -579,20 +551,20 @@ void timerEvent_pollBtns() {
 // increment btn counter every time we read it as active (LOW);
 // reset to 0 every time we read as inactive;
 // assume finished bouncing when counter is MAX_VAL (btn has been active for that long)
-bool pollBtn(uint8_t btn_pin, uint16_t *btn_counter) {
-  return pollBtnForValue(btn_pin, btn_counter, LOW);
-}
+/* bool pollBtn(uint8_t btn_pin, uint16_t *btn_counter) { */
+/*   return pollBtnForValue(btn_pin, btn_counter, LOW); */
+/* } */
 
-bool pollBtnForValue(uint8_t btn_pin, uint16_t *btn_counter, uint8_t value) {
-  uint8_t btn_value = digitalRead(btn_pin);
-  if (btn_value == value) {
-    (*btn_counter)++;
-  } else {
-    *btn_counter = 0;
-  }
+/* bool pollBtnForValue(uint8_t btn_pin, uint16_t *btn_counter, uint8_t value) { */
+/*   uint8_t btn_value = digitalRead(btn_pin); */
+/*   if (btn_value == value) { */
+/*     (*btn_counter)++; */
+/*   } else { */
+/*     *btn_counter = 0; */
+/*   } */
 
-  return *btn_counter == BTN_MAX_BOUNCE;
-}
+/*   return *btn_counter == BTN_MAX_BOUNCE; */
+/* } */
 
 void advanceToNextBrightnessPreset() {
   currentBrightnessPresetIndex++;
