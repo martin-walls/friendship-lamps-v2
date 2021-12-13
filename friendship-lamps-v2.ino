@@ -57,7 +57,7 @@ uint8_t WHITEPINS[] = {25, 26, 32, 33, 27, 14, 12, 13};
 #define LED_PWM_FREQUENCY 5000 /* Hz */
 #define LED_PWM_RESOLUTION 8   /* pwm resolution in bits */
 
-extern const uint8_t gammaVals[];
+/* extern const uint8_t gammaVals[]; */
 
 // front arrays to hold current output
 CRGB leds[NUMLEDS];
