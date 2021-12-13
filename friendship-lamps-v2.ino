@@ -152,7 +152,7 @@ uint8_t lastSentEffect = currentEffect;
 
 bool isWifiEnabled = true;
 
-bool tryWifiConnection(bool reset=false);
+bool tryWifiConnection(bool reset=false, bool configAp=false);
 
 void setup() {
   // random seed from floating analog pin
@@ -239,7 +239,7 @@ void setup() {
     fillSolid_RGBW({CRGB(255, 255, 255), 0});
     FastLED.show();
 
-    bool wifiSuccess = tryWifiConnection(resetWifi);
+    bool wifiSuccess = tryWifiConnection(resetWifi, true);
 
     // show indicator for success or not
     //   green on success
@@ -759,10 +759,11 @@ BLYNK_WRITE(VPIN_ZERGBA_READ) {
 }
 
 #define CONNECT_TIMEOUT 15 // seconds to wait to connect before booting local AP
-#define AP_TIMEOUT 1       // seconds to wait in the config portal before trying again
+#define AP_DISABLED_TIMEOUT 1       // seconds to wait in the config portal before trying again
+#define AP_ENABLED_TIMEOUT 180
 #define MILLIS_BTWN_CONNECTION_RETRIES 120000  // retry wifi connection every 2 mins
 uint32_t lastWifiConnectionAttemptMillis = 0;
-bool tryWifiConnection(bool reset) {
+bool tryWifiConnection(bool reset, bool configAp) {
   // do nothing if already connected, or not enough time elapsed since last try
   if (WiFi.status() != WL_CONNECTED
       && ((millis() - lastWifiConnectionAttemptMillis) > MILLIS_BTWN_CONNECTION_RETRIES
@@ -778,7 +779,7 @@ bool tryWifiConnection(bool reset) {
     }
 
     wifiManager.setConnectTimeout(CONNECT_TIMEOUT);
-    wifiManager.setConfigPortalTimeout(AP_TIMEOUT);
+    wifiManager.setConfigPortalTimeout(configAp ? AP_ENABLED_TIMEOUT : AP_DISABLED_TIMEOUT);
 
     // try to connect again; blocks until WiFi is connected, or time out
     wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD);
