@@ -12,6 +12,7 @@
 #include "gamma.h"
 #include "buttons.h"
 
+#define FASTLED_INTERNAL // disable pragma messages
 #include <FastLED.h>
 #define LEDOUTPUT_TICK 10
 
