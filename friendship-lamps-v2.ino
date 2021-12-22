@@ -1,7 +1,8 @@
 // #define BLYNK_TEMPLATE_ID "TMPLK4ed64ko"
 // #define BLYNK_DEVICE_NAME "Friendship Lamps"
-
-#define THING_INDEX 1
+#define THING_S 0
+#define THING_M 1
+#define THING_INDEX THING_M
 
 #if THING_INDEX == 0
 #include "conf_0.h"
@@ -160,7 +161,7 @@ void setup() {
 
   // initial brightness from eeprom
   currentBrightnessPresetIndex = EEPROM.read(EEPROM_ADDR_BRIGHTNESS_INDEX);
-  FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
+  FastLED.setBrightness(pgm_read_byte(&Gamma::gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
 
   // check if wifi should be disabled
 #define INDICATOR_COLOR_WIFI_DISABLED { CRGB(0, 0, 255), 0 }
@@ -228,7 +229,7 @@ void setup() {
     FastLED.delay(1000);
     /* // connect to wifi */
     /* WiFiManager wifiManager; */
-    
+
     /* if (resetWifi) { */
     /*   wifiManager.resetSettings(); */
     /* } */
@@ -306,7 +307,7 @@ void setRGBWPixelScaled(uint8_t i, RGBW color, uint8_t scaleTo) {
 void whiteLedsShow() {
   // apply the same brightness level as the RGB strip
   uint8_t currentBrightness = brightnessPresets[currentBrightnessPresetIndex];
-  uint8_t gammaCorrectedCurrentBrightness = pgm_read_byte(&gammaVals[currentBrightness]);
+  uint8_t gammaCorrectedCurrentBrightness = pgm_read_byte(&Gamma::gammaVals[currentBrightness]);
   for (int i = 0; i < NUMWHITE; i++) {
     // read value for this LED from array
     // and update LED output value
@@ -317,7 +318,7 @@ void whiteLedsShow() {
 void showAllRGBW() {
   // set correct brightness
   if (shouldShowMorsecodePulse()) {
-    FastLED.setBrightness(pgm_read_byte(&gammaVals[morsecode_pulseBrightness[currentBrightnessPresetIndex]]));
+    FastLED.setBrightness(pgm_read_byte(&Gamma::gammaVals[morsecode_pulseBrightness[currentBrightnessPresetIndex]]));
   } else {
     setBrightnessToCurrentlySelectedLevel();
   }
@@ -328,7 +329,7 @@ void showAllRGBW() {
 // set brightness specified by current brightness level
 void setBrightnessToCurrentlySelectedLevel() {
   uint8_t brightness = (globalMode == GLOBALMODE_NIGHTLIGHT ? brightnessPresetsNightlight : brightnessPresets)[currentBrightnessPresetIndex];
-  FastLED.setBrightness(pgm_read_byte(&gammaVals[brightness]));
+  FastLED.setBrightness(pgm_read_byte(&Gamma::gammaVals[brightness]));
 }
 
 bool shouldShowMorsecodePulse() {
@@ -451,7 +452,7 @@ void timerEvent_updateEffect() {
         incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
         break;
       }
-    case EFFECT_DISCO_FLASH: 
+    case EFFECT_DISCO_FLASH:
       {
         RGBW currentDiscoColor = getCurrentDiscoColor();
         for (uint8_t led = 0; led < NUMLEDS; led++) {
