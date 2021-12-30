@@ -1,5 +1,3 @@
-// #define BLYNK_TEMPLATE_ID "TMPLK4ed64ko"
-// #define BLYNK_DEVICE_NAME "Friendship Lamps"
 #define THING_S 0
 #define THING_M 1
 #define THING_INDEX THING_M
@@ -11,8 +9,6 @@
 #endif
 
 #include "gamma.h"
-#include "buttons.h"
-
 #define FASTLED_INTERNAL // disable pragma messages
 #include <FastLED.h>
 #define LEDOUTPUT_TICK 10
@@ -55,10 +51,31 @@ uint32_t morsecode_show_lastPulseMillis = 0;
 #define LEDPIN 22
 uint8_t WHITEPINS[] = {25, 26, 32, 33, 27, 14, 12, 13};
 
+// unpressed HIGH, pressed LOW
+#define BTN_FRONT 10
+#define BTN_SIDE_SINGLE 9
+#define BTN_SIDE_THREE_FRONT 5
+#define BTN_SIDE_THREE_MIDDLE 18
+#define BTN_SIDE_THREE_BACK 23
+#define BTN1PIN_BRIGHTNESS BTN_FRONT
+#define BTN2PIN_COLOR BTN_SIDE_THREE_FRONT
+#define BTN3PIN_NIGHTLIGHT BTN_SIDE_SINGLE
+#define BTN4PIN_EFFECT BTN_SIDE_THREE_MIDDLE
+#define BTN5PIN_MORSECODE BTN_SIDE_THREE_BACK
+#define BTN_TICK 1 // tick time 1 ms
+uint32_t btn_previousTickTime;
+#define BTN_MAX_BOUNCE 15 // ms
+uint16_t btn1_counter = 0;
+uint16_t btn2_counter = 0;
+uint16_t btn3_counter = 0;
+uint16_t btn4_counter = 0;
+uint16_t btn5_counter = 0;
+uint16_t btn5_offcounter = 0;
+
 #define LED_PWM_FREQUENCY 5000 /* Hz */
 #define LED_PWM_RESOLUTION 8   /* pwm resolution in bits */
 
-/* extern const uint8_t gammaVals[]; */
+extern const uint8_t gammaVals[];
 
 // front arrays to hold current output
 CRGB leds[NUMLEDS];
@@ -137,6 +154,12 @@ uint8_t lastSentEffect = currentEffect;
 bool isWifiEnabled = true;
 
 bool tryWifiConnection(bool reset=false, bool configAp=false);
+uint32_t lastWifiConnectionAttemptMillis = 0;
+
+bool wifiDisconnectedIndicatorEnabled = false;
+
+TaskHandle_t core0LoopTaskHandle;
+TaskHandle_t core1LoopTaskHandle;
 
 void setup() {
   // random seed from floating analog pin
@@ -145,7 +168,12 @@ void setup() {
   // start eeprom
   EEPROM.begin(EEPROM_SIZE);
 
-  Btns::setupBtns();
+  // configure pin inputs
+  pinMode(BTN1PIN_BRIGHTNESS, INPUT);
+  pinMode(BTN2PIN_COLOR, INPUT);
+  pinMode(BTN3PIN_NIGHTLIGHT, INPUT);
+  pinMode(BTN4PIN_EFFECT, INPUT);
+  pinMode(BTN5PIN_MORSECODE, INPUT);
 
   // set up a separate PWM channel for each white LED
   for (uint8_t ledIndex = 0; ledIndex < NUMWHITE; ledIndex++) {
@@ -161,15 +189,17 @@ void setup() {
 
   // initial brightness from eeprom
   currentBrightnessPresetIndex = EEPROM.read(EEPROM_ADDR_BRIGHTNESS_INDEX);
-  FastLED.setBrightness(pgm_read_byte(&Gamma::gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
+  FastLED.setBrightness(pgm_read_byte(&gammaVals[brightnessPresets[currentBrightnessPresetIndex]]));
 
   // check if wifi should be disabled
+#define WIFI_DISABLE_BTN BTN_FRONT
 #define INDICATOR_COLOR_WIFI_DISABLED { CRGB(0, 0, 255), 0 }
+#define WIFI_RESET_BTN BTN_SIDE_SINGLE
 #define INDICATOR_COLOR_WIFI_RESET { CRGB(0, 255, 0), 0 }
   bool resetWifi = false;
-  if (Btns::isBtnPressed(Btns::wifiDisableBtn)) {
+  if (digitalRead(WIFI_DISABLE_BTN) == LOW) {
     delay(250);
-    if (Btns::isBtnPressed(Btns::wifiDisableBtn)) {
+    if (digitalRead(WIFI_DISABLE_BTN) == LOW) {
       isWifiEnabled = false;
       // flash indicator colour
       fillSolid_RGBW(INDICATOR_COLOR_WIFI_DISABLED);
@@ -193,19 +223,20 @@ void setup() {
       FastLED.show();
       delay(250);
 
-      Btns::waitForBtnRelease(Btns::wifiDisableBtn);
+      // wait for btn to be released
+      while (digitalRead(WIFI_DISABLE_BTN) == LOW) {
+        delay(20);
+      }
     }
-  } else if (Btns::isBtnPressed(Btns::wifiResetBtn)) {
+  } else if (digitalRead(WIFI_RESET_BTN) == LOW) {
     delay(250);
-    if (Btns::isBtnPressed(Btns::wifiResetBtn)) {
+    if (digitalRead(WIFI_RESET_BTN) == LOW) {
       resetWifi = true;
       fillSolid_RGBW(INDICATOR_COLOR_WIFI_RESET);
       FastLED.show();
       delay(350);
       fillSolid_RGBW(COLOR_OFF);
       FastLED.show();
-
-      waitForBtnRelease(Btns::wifiResetBtn);
     }
   }
 
@@ -215,50 +246,13 @@ void setup() {
     fillSolid_RGBW({CRGB(255, 255, 255), 0});
     FastLED.show();
 
-    bool wifiSuccess = tryWifiConnection(resetWifi, true);
+    bool success = tryWifiConnection(resetWifi, true);
 
-    // show indicator for success or not
-    //   green on success
-    //   pink  on fail
-    if (wifiSuccess) {
-      fillSolid_RGBW({CRGB(0,255,0),0});
-    } else {
-      fillSolid_RGBW({CRGB(255,0,255),0});
-    }
-    FastLED.show();
-    FastLED.delay(1000);
-    /* // connect to wifi */
-    /* WiFiManager wifiManager; */
-
-    /* if (resetWifi) { */
-    /*   wifiManager.resetSettings(); */
-    /* } */
-
-    /* /1* wifiManager.setWiFiAutoReconnect(true); *1/ */
-
-    /* // try to connect to saved ssid/password */
-    /* // else start AP for configuration */
-    /* if (!wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD)) { */
-    /*   delay(3000); */
-    /*   // reset and try again if it didn't work */
-    /*   ESP.restart(); */
-    /*   delay(5000); */
-    /* } */
-    /* // now connected to wifi */
-
-    /* // blynk configuration */
-    /* FastLED.delay(500); */
-    /* Blynk.config(BLYNK_AUTH_THIS); */
-    /* bool success = Blynk.connect(180); */
-    /* if (!success) { */
-    /*   ESP.restart(); */
-    /*   delay(5000); */
-    /* } */
   }
 
   // setup timers
   timer_sendToOtherDevice.setInterval(SEND_TO_OTHER_DEVICE_TICK, timerEvent_sendToOtherDevice);
-  timer_pollBtns.setInterval(Btns::TICK, timerEvent_pollBtns);
+  timer_pollBtns.setInterval(BTN_TICK, timerEvent_pollBtns);
   timer_ledOutputs.setInterval(LEDOUTPUT_TICK, showAllRGBW);
   timer_updateEffect.setInterval(EFFECT_UPDATE_TICK, timerEvent_updateEffect);
 
@@ -269,19 +263,49 @@ void setup() {
 
   // request color from other device (sync with other device on power on)
   blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_REQUEST_COLOR, effectVersion);
+
+  xTaskCreatePinnedToCore(
+      core0Loop,            // function to run
+      "Core0Loop",          // name of task
+      10000,                // stack size
+      NULL,                 // parameter
+      1,                    // priority
+      &core0LoopTaskHandle, // task handle
+      0                     // core to run on
+  );
+  xTaskCreatePinnedToCore(
+      core1Loop,            // function to run
+      "Core1Loop",          // name of task
+      10000,                // stack size
+      NULL,                 // parameter
+      1,                    // priority
+      &core1LoopTaskHandle, // task handle
+      1                     // core to run on
+  );
 }
 
 void loop() {
-  if (isWifiEnabled) {
+  // no code here; split between core0Loop and core1Loop
+}
+
+// loop on core 0
+void core0Loop(void *pvParameters) {
+  while (true) {
+    timer_pollBtns.run();
+    timer_updateEffect.run();
+    timer_ledOutputs.run();
+  }
+}
+
+// loop on core 1
+void core1Loop(void *pvParameters) {
+  while (true) {
     bool wifiSuccess = tryWifiConnection();
     if (wifiSuccess) {
       Blynk.run();
       timer_sendToOtherDevice.run();
     }
   }
-  timer_pollBtns.run();
-  timer_updateEffect.run();
-  timer_ledOutputs.run();
 }
 
 void setRGBWPixel(uint8_t i, RGBW color) {
@@ -307,7 +331,7 @@ void setRGBWPixelScaled(uint8_t i, RGBW color, uint8_t scaleTo) {
 void whiteLedsShow() {
   // apply the same brightness level as the RGB strip
   uint8_t currentBrightness = brightnessPresets[currentBrightnessPresetIndex];
-  uint8_t gammaCorrectedCurrentBrightness = pgm_read_byte(&Gamma::gammaVals[currentBrightness]);
+  uint8_t gammaCorrectedCurrentBrightness = pgm_read_byte(&gammaVals[currentBrightness]);
   for (int i = 0; i < NUMWHITE; i++) {
     // read value for this LED from array
     // and update LED output value
@@ -318,7 +342,7 @@ void whiteLedsShow() {
 void showAllRGBW() {
   // set correct brightness
   if (shouldShowMorsecodePulse()) {
-    FastLED.setBrightness(pgm_read_byte(&Gamma::gammaVals[morsecode_pulseBrightness[currentBrightnessPresetIndex]]));
+    FastLED.setBrightness(pgm_read_byte(&gammaVals[morsecode_pulseBrightness[currentBrightnessPresetIndex]]));
   } else {
     setBrightnessToCurrentlySelectedLevel();
   }
@@ -329,7 +353,7 @@ void showAllRGBW() {
 // set brightness specified by current brightness level
 void setBrightnessToCurrentlySelectedLevel() {
   uint8_t brightness = (globalMode == GLOBALMODE_NIGHTLIGHT ? brightnessPresetsNightlight : brightnessPresets)[currentBrightnessPresetIndex];
-  FastLED.setBrightness(pgm_read_byte(&Gamma::gammaVals[brightness]));
+  FastLED.setBrightness(pgm_read_byte(&gammaVals[brightness]));
 }
 
 bool shouldShowMorsecodePulse() {
@@ -506,13 +530,13 @@ RGBW interpolateColors(RGBW a, RGBW b, uint8_t ratio) {
 
 void timerEvent_pollBtns() {
   // poll btn 1
-  bool btn1_pressed = Btns::pollBtn(Btns::brightnessBtn);
+  bool btn1_pressed = pollBtn(BTN1PIN_BRIGHTNESS, &btn1_counter);
   if (btn1_pressed) {
     advanceToNextBrightnessPreset();
   }
 
   // poll btn 2
-  bool btn2_pressed = Btns::pollBtn(Btns::colorBtn);
+  bool btn2_pressed = pollBtn(BTN2PIN_COLOR, &btn2_counter);
   if (btn2_pressed) {
     if (globalMode == GLOBALMODE_NORMAL) {
       advanceToNextColorPreset();
@@ -520,14 +544,14 @@ void timerEvent_pollBtns() {
   }
 
   // poll btn 3
-  bool btn3_pressed = Btns::pollBtn(Btns::nightlightBtn);
+  bool btn3_pressed = pollBtn(BTN3PIN_NIGHTLIGHT, &btn3_counter);
   if (btn3_pressed) {
     // action on btn 3 press
     toggleNightlightMode();
   }
 
   // poll btn 4
-  bool btn4_pressed = Btns::pollBtn(Btns::effectBtn);
+  bool btn4_pressed = pollBtn(BTN4PIN_EFFECT, &btn4_counter);
   if (btn4_pressed) {
     if (globalMode == GLOBALMODE_NORMAL) {
       advanceToNextEffect();
@@ -535,9 +559,9 @@ void timerEvent_pollBtns() {
   }
 
   // poll btn 5
-  if (isWifiEnabled) {
-    bool btn5_pressed = Btns::pollBtn(Btns::morsecodeBtn);
-    bool btn5_unpressed = Btns::pollBtnForValue(Btns::morsecodeBtn, Btns::UNPRESSED);
+  bool btn5_pressed = pollBtn(BTN5PIN_MORSECODE, &btn5_counter);
+  bool btn5_unpressed = pollBtnForValue(BTN5PIN_MORSECODE, &btn5_offcounter, HIGH);
+  if (isWifiConnected()) {
     if (btn5_pressed && morsecode_pulse == false) {
       blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_ON, effectVersion);
       morsecode_pulse = true;
@@ -547,26 +571,33 @@ void timerEvent_pollBtns() {
       blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_OFF, effectVersion);
       morsecode_pulse = false;
     }
+  } else {
+    // wifi disconnected
+    if (btn5_pressed) {
+      enableWifiDisconnectedIndicator();
+    } else if (btn5_unpressed) {
+      disableWifiDisconnectedIndicator();
+    }
   }
 }
 
 // increment btn counter every time we read it as active (LOW);
 // reset to 0 every time we read as inactive;
 // assume finished bouncing when counter is MAX_VAL (btn has been active for that long)
-/* bool pollBtn(uint8_t btn_pin, uint16_t *btn_counter) { */
-/*   return pollBtnForValue(btn_pin, btn_counter, LOW); */
-/* } */
+bool pollBtn(uint8_t btn_pin, uint16_t *btn_counter) {
+  return pollBtnForValue(btn_pin, btn_counter, LOW);
+}
 
-/* bool pollBtnForValue(uint8_t btn_pin, uint16_t *btn_counter, uint8_t value) { */
-/*   uint8_t btn_value = digitalRead(btn_pin); */
-/*   if (btn_value == value) { */
-/*     (*btn_counter)++; */
-/*   } else { */
-/*     *btn_counter = 0; */
-/*   } */
+bool pollBtnForValue(uint8_t btn_pin, uint16_t *btn_counter, uint8_t value) {
+  uint8_t btn_value = digitalRead(btn_pin);
+  if (btn_value == value) {
+    (*btn_counter)++;
+  } else {
+    *btn_counter = 0;
+  }
 
-/*   return *btn_counter == BTN_MAX_BOUNCE; */
-/* } */
+  return *btn_counter == BTN_MAX_BOUNCE;
+}
 
 void advanceToNextBrightnessPreset() {
   currentBrightnessPresetIndex++;
@@ -734,20 +765,22 @@ BLYNK_WRITE(VPIN_ZERGBA_READ) {
   usingCustomColor = true;
 }
 
-#define CONNECT_TIMEOUT 15 // seconds to wait to connect before booting local AP
+#define CONNECT_TIMEOUT 30 // seconds to wait to connect before booting local AP
 #define AP_DISABLED_TIMEOUT 1       // seconds to wait in the config portal before trying again
-#define AP_ENABLED_TIMEOUT 180
+#define AP_ENABLED_TIMEOUT 120
 #define MILLIS_BTWN_CONNECTION_RETRIES 120000  // retry wifi connection every 2 mins
-uint32_t lastWifiConnectionAttemptMillis = 0;
 bool tryWifiConnection(bool reset, bool configAp) {
+  if (!isWifiEnabled) {
+    return false;
+  }
   // do nothing if already connected, or not enough time elapsed since last try
   if (WiFi.status() != WL_CONNECTED
       && ((millis() - lastWifiConnectionAttemptMillis) > MILLIS_BTWN_CONNECTION_RETRIES
         || lastWifiConnectionAttemptMillis == 0)) {
     lastWifiConnectionAttemptMillis = millis();
     /* fillSolid_RGBW({CRGB(255,0,0), 0}); */
-    showWifiDisconnectedIndicator();
-    showAllRGBW();
+    // showWifiDisconnectedIndicator();
+    // showAllRGBW();
     WiFiManager wifiManager;
 
     if (reset) {
@@ -767,33 +800,24 @@ bool tryWifiConnection(bool reset, bool configAp) {
   }
 
   // return status of wifi connection
-  return WiFi.status() == WL_CONNECTED && Blynk.connected();
+  return WiFi.status() == WL_CONNECTED;
+}
+
+bool isWifiConnected() {
+  return WiFi.status() == WL_CONNECTED;
+}
+
+void enableWifiDisconnectedIndicator() {
+  wifiDisconnectedIndicatorEnabled = true;
+}
+
+void disableWifiDisconnectedIndicator() {
+  wifiDisconnectedIndicatorEnabled = false;
 }
 
 #define WIFI_DISCONNECTED_INDICATOR_COLOR {CRGB(255,0,0), 0}
 void showWifiDisconnectedIndicator() {
-  if (WiFi.status() != WL_CONNECTED) {
-    setRGBWPixel(NUMLEDS-1, WIFI_DISCONNECTED_INDICATOR_COLOR);
-    setRGBWPixel(NUMLEDS-2, WIFI_DISCONNECTED_INDICATOR_COLOR);
-    setRGBWPixel(NUMLEDS-3, WIFI_DISCONNECTED_INDICATOR_COLOR);
+  if (wifiDisconnectedIndicatorEnabled) {
+    fillSolid_RGBW(WIFI_DISCONNECTED_INDICATOR_COLOR);
   }
 }
-
-// gamma correction values
-/* const PROGMEM uint8_t gammaVals[] = { */
-/*   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, */
-/*   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, */
-/*   1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, */
-/*   2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, */
-/*   5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, */
-/*   10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16, */
-/*   17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25, */
-/*   25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36, */
-/*   37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50, */
-/*   51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68, */
-/*   69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89, */
-/*   90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 109, 110, 112, 114, */
-/*   115, 117, 119, 120, 122, 124, 126, 127, 129, 131, 133, 135, 137, 138, 140, 142, */
-/*   144, 146, 148, 150, 152, 154, 156, 158, 160, 162, 164, 167, 169, 171, 173, 175, */
-/*   177, 180, 182, 184, 186, 189, 191, 193, 196, 198, 200, 203, 205, 208, 210, 213, */
-/*   215, 218, 220, 223, 225, 228, 231, 233, 236, 239, 241, 244, 247, 249, 252, 255}; */
