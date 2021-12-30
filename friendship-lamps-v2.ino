@@ -1,6 +1,6 @@
 #define THING_S 0
 #define THING_M 1
-#define THING_INDEX 1
+#define THING_INDEX THING_M
 
 #if THING_INDEX == 0
 #include "conf_0.h"
@@ -154,6 +154,12 @@ uint8_t lastSentEffect = currentEffect;
 bool isWifiEnabled = true;
 
 bool tryWifiConnection(bool reset=false, bool configAp=false);
+uint32_t lastWifiConnectionAttemptMillis = 0;
+
+bool wifiDisconnectedIndicatorEnabled = false;
+
+TaskHandle_t core0LoopTaskHandle;
+TaskHandle_t core1LoopTaskHandle;
 
 void setup() {
   // random seed from floating analog pin
@@ -240,45 +246,48 @@ void setup() {
     fillSolid_RGBW({CRGB(255, 255, 255), 0});
     FastLED.show();
 
-    bool wifiSuccess = tryWifiConnection(resetWifi, true);
+    // bool wifiSuccess = tryWifiConnection(resetWifi, true);
 
     // show indicator for success or not
     //   green on success
     //   pink  on fail
-    if (wifiSuccess) {
-      fillSolid_RGBW({CRGB(0,255,0),0});
-    } else {
-      fillSolid_RGBW({CRGB(255,0,255),0});
+    // if (wifiSuccess) {
+    //   fillSolid_RGBW({CRGB(0,255,0),0});
+    // } else {
+    //   fillSolid_RGBW({CRGB(255,0,255),0});
+    // }
+    // FastLED.show();
+    // FastLED.delay(1000);
+    // connect to wifi
+    WiFiManager wifiManager;
+
+    if (resetWifi) {
+      wifiManager.resetSettings();
     }
-    FastLED.show();
-    FastLED.delay(1000);
-    /* // connect to wifi */
-    /* WiFiManager wifiManager; */
 
-    /* if (resetWifi) { */
-    /*   wifiManager.resetSettings(); */
-    /* } */
+    /* wifiManager.setWiFiAutoReconnect(true); */
 
-    /* /1* wifiManager.setWiFiAutoReconnect(true); *1/ */
+    // try to connect to saved ssid/password
+    // else start AP for configuration
+    bool success = wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD);
+    lastWifiConnectionAttemptMillis = millis();
+    // if (!wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD)) {
+    //   delay(3000);
+    //   // reset and try again if it didn't work
+    //   ESP.restart();
+    //   delay(5000);
+    // }
 
-    /* // try to connect to saved ssid/password */
-    /* // else start AP for configuration */
-    /* if (!wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD)) { */
-    /*   delay(3000); */
-    /*   // reset and try again if it didn't work */
-    /*   ESP.restart(); */
-    /*   delay(5000); */
-    /* } */
-    /* // now connected to wifi */
-
-    /* // blynk configuration */
-    /* FastLED.delay(500); */
-    /* Blynk.config(BLYNK_AUTH_THIS); */
-    /* bool success = Blynk.connect(180); */
-    /* if (!success) { */
-    /*   ESP.restart(); */
-    /*   delay(5000); */
-    /* } */
+    // blynk configuration
+    FastLED.delay(500);
+    if (success) {
+      Blynk.config(BLYNK_AUTH_THIS);
+      bool blynkSuccess = Blynk.connect(180);
+      // if (!blynkSuccess) {
+      //   ESP.restart();
+      //   delay(5000);
+      // }
+    }
   }
 
   // setup timers
@@ -294,19 +303,56 @@ void setup() {
 
   // request color from other device (sync with other device on power on)
   blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_REQUEST_COLOR, effectVersion);
+
+  xTaskCreatePinnedToCore(
+      core0Loop,            // function to run
+      "Core0Loop",          // name of task
+      10000,                // stack size
+      NULL,                 // parameter
+      1,                    // priority
+      &core0LoopTaskHandle, // task handle
+      0                     // core to run on
+  );
+  xTaskCreatePinnedToCore(
+      core1Loop,            // function to run
+      "Core1Loop",          // name of task
+      10000,                // stack size
+      NULL,                 // parameter
+      1,                    // priority
+      &core1LoopTaskHandle, // task handle
+      1                     // core to run on
+  );
 }
 
 void loop() {
-  if (isWifiEnabled) {
+  // timer_pollBtns.run();
+  // timer_updateEffect.run();
+  // timer_ledOutputs.run();
+  // // if (isWifiEnabled) {
+  //   bool wifiSuccess = tryWifiConnection();
+  //   if (wifiSuccess) {
+  //     Blynk.run();
+  //     timer_sendToOtherDevice.run();
+  //   }
+  // }
+}
+
+void core0Loop(void *pvParameters) {
+  while (true) {
+    timer_pollBtns.run();
+    timer_updateEffect.run();
+    timer_ledOutputs.run();
+  }
+}
+
+void core1Loop(void *pvParameters) {
+  while (true) {
     bool wifiSuccess = tryWifiConnection();
     if (wifiSuccess) {
       Blynk.run();
       timer_sendToOtherDevice.run();
     }
   }
-  timer_pollBtns.run();
-  timer_updateEffect.run();
-  timer_ledOutputs.run();
 }
 
 void setRGBWPixel(uint8_t i, RGBW color) {
@@ -412,7 +458,7 @@ RGBW getCurrentColor() {
 void timerEvent_updateEffect() {
   if (globalMode == GLOBALMODE_NIGHTLIGHT) {
     fillSolid_RGBW(nightlightColor);
-    showWifiDisconnectedIndicator();
+    // showWifiDisconnectedIndicator();
     return;
   }
   switch (currentEffect) {
@@ -560,9 +606,9 @@ void timerEvent_pollBtns() {
   }
 
   // poll btn 5
-  if (isWifiEnabled) {
-    bool btn5_pressed = pollBtn(BTN5PIN_MORSECODE, &btn5_counter);
-    bool btn5_unpressed = pollBtnForValue(BTN5PIN_MORSECODE, &btn5_offcounter, HIGH);
+  bool btn5_pressed = pollBtn(BTN5PIN_MORSECODE, &btn5_counter);
+  bool btn5_unpressed = pollBtnForValue(BTN5PIN_MORSECODE, &btn5_offcounter, HIGH);
+  if (isWifiConnected()) {
     if (btn5_pressed && morsecode_pulse == false) {
       blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_ON, effectVersion);
       morsecode_pulse = true;
@@ -571,6 +617,13 @@ void timerEvent_pollBtns() {
     } else if (btn5_unpressed && morsecode_pulse == true && (millis() - morsecode_send_lastPulseMillis) > MORSECODE_MIN_PULSE) {
       blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_OFF, effectVersion);
       morsecode_pulse = false;
+    }
+  } else {
+    // wifi disconnected
+    if (btn5_pressed) {
+      enableWifiDisconnectedIndicator();
+    } else if (btn5_unpressed) {
+      disableWifiDisconnectedIndicator();
     }
   }
 }
@@ -759,11 +812,10 @@ BLYNK_WRITE(VPIN_ZERGBA_READ) {
   usingCustomColor = true;
 }
 
-#define CONNECT_TIMEOUT 15 // seconds to wait to connect before booting local AP
+#define CONNECT_TIMEOUT 30 // seconds to wait to connect before booting local AP
 #define AP_DISABLED_TIMEOUT 1       // seconds to wait in the config portal before trying again
 #define AP_ENABLED_TIMEOUT 180
 #define MILLIS_BTWN_CONNECTION_RETRIES 120000  // retry wifi connection every 2 mins
-uint32_t lastWifiConnectionAttemptMillis = 0;
 bool tryWifiConnection(bool reset, bool configAp) {
   // do nothing if already connected, or not enough time elapsed since last try
   if (WiFi.status() != WL_CONNECTED
@@ -771,8 +823,8 @@ bool tryWifiConnection(bool reset, bool configAp) {
         || lastWifiConnectionAttemptMillis == 0)) {
     lastWifiConnectionAttemptMillis = millis();
     /* fillSolid_RGBW({CRGB(255,0,0), 0}); */
-    showWifiDisconnectedIndicator();
-    showAllRGBW();
+    // showWifiDisconnectedIndicator();
+    // showAllRGBW();
     WiFiManager wifiManager;
 
     if (reset) {
@@ -792,33 +844,25 @@ bool tryWifiConnection(bool reset, bool configAp) {
   }
 
   // return status of wifi connection
-  return WiFi.status() == WL_CONNECTED && Blynk.connected();
+  return WiFi.status() == WL_CONNECTED;
+}
+
+bool isWifiConnected() {
+  return WiFi.status() == WL_CONNECTED;
+}
+
+void enableWifiDisconnectedIndicator() {
+  wifiDisconnectedIndicatorEnabled = true;
+}
+
+void disableWifiDisconnectedIndicator() {
+  wifiDisconnectedIndicatorEnabled = false;
 }
 
 #define WIFI_DISCONNECTED_INDICATOR_COLOR {CRGB(255,0,0), 0}
 void showWifiDisconnectedIndicator() {
-  if (WiFi.status() != WL_CONNECTED) {
-    setRGBWPixel(NUMLEDS-1, WIFI_DISCONNECTED_INDICATOR_COLOR);
-    setRGBWPixel(NUMLEDS-2, WIFI_DISCONNECTED_INDICATOR_COLOR);
-    setRGBWPixel(NUMLEDS-3, WIFI_DISCONNECTED_INDICATOR_COLOR);
+  if (wifiDisconnectedIndicatorEnabled) {
+    fillSolid_RGBW(WIFI_DISCONNECTED_INDICATOR_COLOR);
   }
 }
 
-// gamma correction values
-/* const PROGMEM uint8_t gammaVals[] = { */
-/*   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, */
-/*   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, */
-/*   1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, */
-/*   2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, */
-/*   5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9, 10, */
-/*   10, 10, 11, 11, 11, 12, 12, 13, 13, 13, 14, 14, 15, 15, 16, 16, */
-/*   17, 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 22, 23, 24, 24, 25, */
-/*   25, 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36, */
-/*   37, 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50, */
-/*   51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 66, 67, 68, */
-/*   69, 70, 72, 73, 74, 75, 77, 78, 79, 81, 82, 83, 85, 86, 87, 89, */
-/*   90, 92, 93, 95, 96, 98, 99, 101, 102, 104, 105, 107, 109, 110, 112, 114, */
-/*   115, 117, 119, 120, 122, 124, 126, 127, 129, 131, 133, 135, 137, 138, 140, 142, */
-/*   144, 146, 148, 150, 152, 154, 156, 158, 160, 162, 164, 167, 169, 171, 173, 175, */
-/*   177, 180, 182, 184, 186, 189, 191, 193, 196, 198, 200, 203, 205, 208, 210, 213, */
-/*   215, 218, 220, 223, 225, 228, 231, 233, 236, 239, 241, 244, 247, 249, 252, 255}; */
