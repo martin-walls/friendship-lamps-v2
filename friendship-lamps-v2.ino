@@ -255,7 +255,7 @@ void setup() {
     FastLED.delay(1000);
     /* // connect to wifi */
     /* WiFiManager wifiManager; */
-    
+
     /* if (resetWifi) { */
     /*   wifiManager.resetSettings(); */
     /* } */
@@ -478,7 +478,7 @@ void timerEvent_updateEffect() {
         incrementDiscoColor(DISCO_INTERPOLATION_INCREMENT_PER_TICK);
         break;
       }
-    case EFFECT_DISCO_FLASH: 
+    case EFFECT_DISCO_FLASH:
       {
         RGBW currentDiscoColor = getCurrentDiscoColor();
         for (uint8_t led = 0; led < NUMLEDS; led++) {
