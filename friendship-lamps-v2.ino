@@ -246,48 +246,8 @@ void setup() {
     fillSolid_RGBW({CRGB(255, 255, 255), 0});
     FastLED.show();
 
-    // bool wifiSuccess = tryWifiConnection(resetWifi, true);
+    bool success = tryWifiConnection(resetWifi, true);
 
-    // show indicator for success or not
-    //   green on success
-    //   pink  on fail
-    // if (wifiSuccess) {
-    //   fillSolid_RGBW({CRGB(0,255,0),0});
-    // } else {
-    //   fillSolid_RGBW({CRGB(255,0,255),0});
-    // }
-    // FastLED.show();
-    // FastLED.delay(1000);
-    // connect to wifi
-    WiFiManager wifiManager;
-
-    if (resetWifi) {
-      wifiManager.resetSettings();
-    }
-
-    /* wifiManager.setWiFiAutoReconnect(true); */
-
-    // try to connect to saved ssid/password
-    // else start AP for configuration
-    bool success = wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD);
-    lastWifiConnectionAttemptMillis = millis();
-    // if (!wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD)) {
-    //   delay(3000);
-    //   // reset and try again if it didn't work
-    //   ESP.restart();
-    //   delay(5000);
-    // }
-
-    // blynk configuration
-    FastLED.delay(500);
-    if (success) {
-      Blynk.config(BLYNK_AUTH_THIS);
-      bool blynkSuccess = Blynk.connect(180);
-      // if (!blynkSuccess) {
-      //   ESP.restart();
-      //   delay(5000);
-      // }
-    }
   }
 
   // setup timers
@@ -325,18 +285,10 @@ void setup() {
 }
 
 void loop() {
-  // timer_pollBtns.run();
-  // timer_updateEffect.run();
-  // timer_ledOutputs.run();
-  // // if (isWifiEnabled) {
-  //   bool wifiSuccess = tryWifiConnection();
-  //   if (wifiSuccess) {
-  //     Blynk.run();
-  //     timer_sendToOtherDevice.run();
-  //   }
-  // }
+  // no code here; split between core0Loop and core1Loop
 }
 
+// loop on core 0
 void core0Loop(void *pvParameters) {
   while (true) {
     timer_pollBtns.run();
@@ -345,6 +297,7 @@ void core0Loop(void *pvParameters) {
   }
 }
 
+// loop on core 1
 void core1Loop(void *pvParameters) {
   while (true) {
     bool wifiSuccess = tryWifiConnection();
@@ -458,7 +411,7 @@ RGBW getCurrentColor() {
 void timerEvent_updateEffect() {
   if (globalMode == GLOBALMODE_NIGHTLIGHT) {
     fillSolid_RGBW(nightlightColor);
-    // showWifiDisconnectedIndicator();
+    showWifiDisconnectedIndicator();
     return;
   }
   switch (currentEffect) {
@@ -814,9 +767,12 @@ BLYNK_WRITE(VPIN_ZERGBA_READ) {
 
 #define CONNECT_TIMEOUT 30 // seconds to wait to connect before booting local AP
 #define AP_DISABLED_TIMEOUT 1       // seconds to wait in the config portal before trying again
-#define AP_ENABLED_TIMEOUT 180
+#define AP_ENABLED_TIMEOUT 120
 #define MILLIS_BTWN_CONNECTION_RETRIES 120000  // retry wifi connection every 2 mins
 bool tryWifiConnection(bool reset, bool configAp) {
+  if (!isWifiEnabled) {
+    return false;
+  }
   // do nothing if already connected, or not enough time elapsed since last try
   if (WiFi.status() != WL_CONNECTED
       && ((millis() - lastWifiConnectionAttemptMillis) > MILLIS_BTWN_CONNECTION_RETRIES
