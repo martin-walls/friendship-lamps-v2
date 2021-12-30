@@ -1,6 +1,5 @@
-// #define BLYNK_TEMPLATE_ID "TMPLK4ed64ko"
-// #define BLYNK_DEVICE_NAME "Friendship Lamps"
-
+#define THING_S 0
+#define THING_M 1
 #define THING_INDEX 1
 
 #if THING_INDEX == 0
