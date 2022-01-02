@@ -18,7 +18,9 @@
 #define VPIN_ZERGBA_READ V6
 #define VPIN_APP_COLOR_LED V7
 
-#include "secrets/secrets_common.h"
+#define VPIN_SEND V8
+#define VPIN_READ V9
+
 #include "secrets/secrets_0.h"
 
 #else
@@ -34,7 +36,9 @@
 #define VPIN_ZERGBA_READ V6
 #define VPIN_APP_COLOR_LED V7
 
-#include "secrets/secrets_common.h"
+#define VPIN_SEND V9
+#define VPIN_READ V8
+
 #include "secrets/secrets_1.h"
 
 #endif

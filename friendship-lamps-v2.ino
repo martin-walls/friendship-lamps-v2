@@ -15,10 +15,11 @@
 #include <BlynkSimpleEsp32.h>
 WidgetBridge blynkBridge(VPIN_COLOR_SEND);
 BlynkTimer timer_sendToOtherDevice;
-#define SEND_TO_OTHER_DEVICE_TICK 1000
+#define SEND_TO_OTHER_DEVICE_TICK 500
 #define FORCE_SEND_TO_OTHER_DEVICE_TICK 30000 // send to other device regardless of state every 30 seconds
 uint32_t forceSend_lastMillis = 0;
 uint16_t effectVersion = 0;
+uint16_t lastSentEffectVersion = 0;
 
 BlynkTimer timer_pollBtns;
 BlynkTimer timer_ledOutputs;
@@ -142,6 +143,8 @@ uint8_t disco_currentInterpolation = 0;
 #define DISCO_SLOW_INTERPOLATION_INCREMENT_PER_TICK 2
 uint8_t currentEffect = EFFECT_NORMAL;
 uint8_t lastSentEffect = currentEffect;
+
+
 
 bool isWifiEnabled = true;
 
@@ -625,10 +628,10 @@ void advanceToNextColorPreset() {
 void toggleNightlightMode() {
   if (globalMode == GLOBALMODE_NORMAL) {
     globalMode = GLOBALMODE_NIGHTLIGHT;
-    blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT, effectVersion);
+    // blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT, effectVersion);
   } else {
     globalMode = GLOBALMODE_NORMAL;
-    blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NORMAL, effectVersion);
+    // blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NORMAL, effectVersion);
   }
   effectVersion++;
 
@@ -654,37 +657,48 @@ void advanceToNextEffect() {
 }
 
 void timerEvent_sendToOtherDevice() {
-  bool forceSend = (millis() - forceSend_lastMillis) > FORCE_SEND_TO_OTHER_DEVICE_TICK;
-  if (currentColorPresetIndex != lastSentColorPresetIndex
-      || forceSend) {
+  bool forceSend = ((millis() - forceSend_lastMillis) > FORCE_SEND_TO_OTHER_DEVICE_TICK);
+  forceSend = false;
+
+  if (lastSentEffectVersion != effectVersion || forceSend) {
     blynk_sendToOtherDevice();
-  }
-  if (currentEffect != lastSentEffect
-      || forceSend) {
-    blynk_sendEffectToOtherDevice();
-  }
-  if (forceSend) {
-    if (globalMode == GLOBALMODE_NORMAL) {
-      blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NORMAL, effectVersion);
-    } else {
-      blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT, effectVersion);
+    if (forceSend) {
+      forceSend_lastMillis = millis();
     }
-    forceSend_lastMillis = millis();
   }
-  blynk_updateAppColorLed(getCurrentColor());
+  // if (currentEffect != lastSentEffect
+  //     || forceSend) {
+  //   blynk_sendEffectToOtherDevice();
+  // }
+
+  // blynk_updateAppColorLed(getCurrentColor());
 }
 
 // in separate function so we can send colour when requested, bypassing the
 // check for if colour has changed
 void blynk_sendToOtherDevice() {
-  blynkBridge.virtualWrite(VPIN_COLOR_SEND, currentColorPresetIndex, effectVersion);
-  lastSentColorPresetIndex = currentColorPresetIndex;
+  blynkBridge.virtualWrite(VPIN_SEND, currentColorPresetIndex, currentEffect, globalMode, effectVersion);
+  // send colour
+  // blynkBridge.virtualWrite(VPIN_COLOR_SEND, currentColorPresetIndex, effectVersion);
+  // lastSentColorPresetIndex = currentColorPresetIndex;
+
+  // send effect
+  // blynkBridge.virtualWrite(VPIN_EFFECT_SEND, currentEffect, effectVersion);
+
+  // send nightlight mode
+  // if (globalMode == GLOBALMODE_NORMAL) {
+  //   blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NORMAL, effectVersion);
+  // } else {
+  //   blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT, effectVersion);
+  // }
+
+  lastSentEffectVersion = effectVersion;
 }
 
-void blynk_sendEffectToOtherDevice() {
-  blynkBridge.virtualWrite(VPIN_EFFECT_SEND, currentEffect, effectVersion);
-  lastSentEffect = currentEffect;
-}
+// void blynk_sendEffectToOtherDevice() {
+//   blynkBridge.virtualWrite(VPIN_EFFECT_SEND, currentEffect, effectVersion);
+//   lastSentEffect = currentEffect;
+// }
 
 void blynk_updateAppColorLed(RGBW color) {
   char hex[8];
@@ -700,16 +714,33 @@ BLYNK_CONNECTED() {
   blynkBridge.setAuthToken(BLYNK_AUTH_OTHER);
 }
 
-// handle when we receive a color update from the other device
-BLYNK_WRITE(VPIN_COLOR_READ) {
-  uint16_t receivedEffectVersion = param[1].asInt();
+BLYNK_WRITE(VPIN_READ) {
+  uint8_t colorPresetIndex = param[0].asInt();
+  uint8_t effectIndex = param[1].asInt();
+  uint8_t mode = param[2].asInt();
+  uint16_t receivedEffectVersion = param[3].asInt();
 
-  // tie break on higher device ID
-  if (receivedEffectVersion > effectVersion || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
-    currentColorPresetIndex = param[0].asInt();
+  if (receivedEffectVersion > effectVersion) {
+    currentColorPresetIndex = colorPresetIndex;
     usingCustomColor = false;
+    currentEffect = effectIndex;
+    globalMode = mode;
     effectVersion = receivedEffectVersion;
   }
+  // ignore lower version
+}
+
+// handle when we receive a color update from the other device
+BLYNK_WRITE(VPIN_COLOR_READ) {
+  // uint16_t receivedEffectVersion = param[1].asInt();
+
+  // // tie break on higher device ID
+  // if (receivedEffectVersion > effectVersion ||
+  //     (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
+  //   currentColorPresetIndex = param[0].asInt();
+  //   usingCustomColor = false;
+  //   effectVersion = receivedEffectVersion;
+  // }
 }
 
 // handle when we receive a status request from the other device
@@ -721,7 +752,6 @@ BLYNK_WRITE(VPIN_STATUS_READ) {
     case BLYNK_STATUS_REQUEST_COLOR:
       {
         blynk_sendToOtherDevice();
-        blynk_sendEffectToOtherDevice();
         break;
       }
     case BLYNK_STATUS_MORSECODE_PULSE_ON: // TODO in-order delivery of morsecode messages
@@ -737,18 +767,18 @@ BLYNK_WRITE(VPIN_STATUS_READ) {
       }
     case BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT:
       {
-        if (receivedEffectVersion > effectVersion
-            || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
-          globalMode = GLOBALMODE_NIGHTLIGHT;
-        }
+        // if (receivedEffectVersion > effectVersion
+        //     || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
+        //   globalMode = GLOBALMODE_NIGHTLIGHT;
+        // }
         break;
       }
     case BLYNK_STATUS_SWITCH_TO_NORMAL:
       {
-        if (receivedEffectVersion > effectVersion
-            || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
-          globalMode = GLOBALMODE_NORMAL;
-        }
+        // if (receivedEffectVersion > effectVersion
+        //     || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
+        //   globalMode = GLOBALMODE_NORMAL;
+        // }
         break;
       }
   }
@@ -756,13 +786,14 @@ BLYNK_WRITE(VPIN_STATUS_READ) {
 
 // handle when we receive an effect update from the other device
 BLYNK_WRITE(VPIN_EFFECT_READ) {
-  uint16_t receivedEffectVersion = param[1].asInt();
+  // uint16_t receivedEffectVersion = param[1].asInt();
 
-  // tie break on higher device ID
-  if (receivedEffectVersion > effectVersion || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
-    currentEffect = param[0].asInt();
-    effectVersion = receivedEffectVersion;
-  }
+  // // tie break on higher device ID
+  // if (receivedEffectVersion > effectVersion ||
+  //     (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
+  //   currentEffect = param[0].asInt();
+  //   effectVersion = receivedEffectVersion;
+  // }
   // if received lower version, ignore it
 }
 
