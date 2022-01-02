@@ -3,7 +3,7 @@
 
 #define THING_S 0
 #define THING_M 1
-#define THING_INDEX THING_S
+#define THING_INDEX THING_M
 
 #if THING_INDEX == 0
 #define VPIN_STATUS_SEND V2

@@ -13,7 +13,7 @@
 #define EEPROM_ADDR_BRIGHTNESS_INDEX 0
 
 #include <BlynkSimpleEsp32.h>
-WidgetBridge blynkBridge(VPIN_COLOR_SEND);
+WidgetBridge blynkBridge(VPIN_SEND);
 BlynkTimer timer_sendToOtherDevice;
 #define SEND_TO_OTHER_DEVICE_TICK 500
 #define FORCE_SEND_TO_OTHER_DEVICE_TICK 30000 // send to other device regardless of state every 30 seconds
@@ -28,8 +28,6 @@ BlynkTimer timer_updateEffect;
 #define BLYNK_STATUS_REQUEST_COLOR 0
 #define BLYNK_STATUS_MORSECODE_PULSE_ON 1
 #define BLYNK_STATUS_MORSECODE_PULSE_OFF 2
-#define BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT 3
-#define BLYNK_STATUS_SWITCH_TO_NORMAL 4
 bool morsecode_pulse = false;
 #define MORSECODE_MIN_PULSE 50    // ms
 #define MORSECODE_MAX_PULSE 20000 // 20 s
@@ -108,9 +106,6 @@ uint8_t lastSentColorPresetIndex = currentColorPresetIndex;
 bool usingCustomColor = false;
 RGBW customColor = {CRGB(0,0,0),0};
 
-// RGBW currentOutputColor;
-// uint32_t ledUpdate_lastTickTime = 0;
-// #define LEDUPDATE_TICK 100 // ms
 
 RGBW nightlightColor = {CRGB(0, 0, 0), 192};
 
@@ -363,38 +358,6 @@ bool shouldShowMorsecodePulse() {
     || (!morsecode_pulse && (millis() - morsecode_show_lastPulseMillis) < MORSECODE_MIN_PULSE); // pulse off but haven't got to min pulse length yet so keep it on till then
 }
 
-// void updatePixels() {
-//     // CRGB currentRGB = currentOutputColor.rgb;
-//     // uint8_t currentW = currentOutputColor.w;
-//     RGBW targetColor = colorPresets[currentColorPresetIndex];
-//     RGBW newOutputColor = currentOutputColor;
-//     if (currentOutputColor.rgb != targetColor.rgb && (millis() - ledUpdate_lastTickTime) > LEDUPDATE_TICK) {
-//         if (currentOutputColor.rgb.r > targetColor.rgb.r) {
-//             newOutputColor.rgb.r++;
-//         } else if (currentOutputColor.rgb.r < targetColor.rgb.r) {
-//             newOutputColor.rgb.r--;
-//         }
-//         if (currentOutputColor.rgb.g > targetColor.rgb.g) {
-//             newOutputColor.rgb.g++;
-//         } else if (currentOutputColor.rgb.g < targetColor.rgb.g) {
-//             newOutputColor.rgb.g--;
-//         }
-//         if (currentOutputColor.rgb.b > targetColor.rgb.b) {
-//             newOutputColor.rgb.b++;
-//         } else if (currentOutputColor.rgb.b < targetColor.rgb.b) {
-//             newOutputColor.rgb.b--;
-//         }
-//         if (currentOutputColor.w > targetColor.w) {
-//             newOutputColor.w++;
-//         } else if (currentOutputColor.w < targetColor.w) {
-//             newOutputColor.w--;
-//         }
-//         ledUpdate_lastTickTime = millis();
-//     }
-//     fillSolid_RGBW(newOutputColor);
-//     showAllRGBW();
-// }
-
 void fillSolid_RGBW(RGBW color) {
   for (uint8_t i = 0; i < NUMLEDS; i++) {
     leds[i] = color.rgb;
@@ -564,6 +527,9 @@ void timerEvent_pollBtns() {
   bool btn5_pressed = pollBtn(BTN5PIN_MORSECODE, &btn5_counter);
   bool btn5_unpressed = pollBtnForValue(BTN5PIN_MORSECODE, &btn5_offcounter, HIGH);
   if (isWifiConnected()) {
+    // to make sure it doesn't get stuck on
+    disableWifiDisconnectedIndicator();
+
     if (btn5_pressed && morsecode_pulse == false) {
       blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_MORSECODE_PULSE_ON, effectVersion);
       morsecode_pulse = true;
@@ -619,8 +585,6 @@ void advanceToNextColorPreset() {
   if (currentColorPresetIndex >= NUM_COLOR_PRESETS) {
     currentColorPresetIndex = 0;
   }
-  fillSolid_RGBW(colorPresets[currentColorPresetIndex]);
-  // showAllRGBW();
   usingCustomColor = false;
   effectVersion++;
 }
@@ -628,24 +592,10 @@ void advanceToNextColorPreset() {
 void toggleNightlightMode() {
   if (globalMode == GLOBALMODE_NORMAL) {
     globalMode = GLOBALMODE_NIGHTLIGHT;
-    // blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT, effectVersion);
   } else {
     globalMode = GLOBALMODE_NORMAL;
-    // blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NORMAL, effectVersion);
   }
   effectVersion++;
-
-  // // swap front and back arrays
-  // for (uint8_t i = 0; i < NUMLEDS; i++) {
-  //     CRGB tmp = previous_leds[i];
-  //     previous_leds[i] = leds[i];
-  //     leds[i] = tmp;
-  // }
-  // for (uint8_t i = 0; i < NUMWHITE; i++) {
-  //     uint8_t tmp = previous_whiteleds[i];
-  //     previous_whiteleds[i] = whiteleds[i];
-  //     whiteleds[i] = tmp;
-  // }
 }
 
 void advanceToNextEffect() {
@@ -666,10 +616,6 @@ void timerEvent_sendToOtherDevice() {
       forceSend_lastMillis = millis();
     }
   }
-  // if (currentEffect != lastSentEffect
-  //     || forceSend) {
-  //   blynk_sendEffectToOtherDevice();
-  // }
 
   // blynk_updateAppColorLed(getCurrentColor());
 }
@@ -677,28 +623,14 @@ void timerEvent_sendToOtherDevice() {
 // in separate function so we can send colour when requested, bypassing the
 // check for if colour has changed
 void blynk_sendToOtherDevice() {
-  blynkBridge.virtualWrite(VPIN_SEND, currentColorPresetIndex, currentEffect, globalMode, effectVersion);
-  // send colour
-  // blynkBridge.virtualWrite(VPIN_COLOR_SEND, currentColorPresetIndex, effectVersion);
-  // lastSentColorPresetIndex = currentColorPresetIndex;
-
-  // send effect
-  // blynkBridge.virtualWrite(VPIN_EFFECT_SEND, currentEffect, effectVersion);
-
-  // send nightlight mode
-  // if (globalMode == GLOBALMODE_NORMAL) {
-  //   blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NORMAL, effectVersion);
-  // } else {
-  //   blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT, effectVersion);
-  // }
+  blynkBridge.virtualWrite(VPIN_SEND,
+      currentColorPresetIndex,
+      currentEffect,
+      globalMode,
+      effectVersion);
 
   lastSentEffectVersion = effectVersion;
 }
-
-// void blynk_sendEffectToOtherDevice() {
-//   blynkBridge.virtualWrite(VPIN_EFFECT_SEND, currentEffect, effectVersion);
-//   lastSentEffect = currentEffect;
-// }
 
 void blynk_updateAppColorLed(RGBW color) {
   char hex[8];
@@ -714,33 +646,25 @@ BLYNK_CONNECTED() {
   blynkBridge.setAuthToken(BLYNK_AUTH_OTHER);
 }
 
+// handle effect updates
 BLYNK_WRITE(VPIN_READ) {
   uint8_t colorPresetIndex = param[0].asInt();
   uint8_t effectIndex = param[1].asInt();
   uint8_t mode = param[2].asInt();
   uint16_t receivedEffectVersion = param[3].asInt();
 
-  if (receivedEffectVersion > effectVersion) {
+  // tie break on THING_INDEX
+  if (receivedEffectVersion > effectVersion
+      || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
     currentColorPresetIndex = colorPresetIndex;
     usingCustomColor = false;
     currentEffect = effectIndex;
     globalMode = mode;
     effectVersion = receivedEffectVersion;
+  } else {
+    // if lower version, send to other device
+    blynk_sendToOtherDevice();
   }
-  // ignore lower version
-}
-
-// handle when we receive a color update from the other device
-BLYNK_WRITE(VPIN_COLOR_READ) {
-  // uint16_t receivedEffectVersion = param[1].asInt();
-
-  // // tie break on higher device ID
-  // if (receivedEffectVersion > effectVersion ||
-  //     (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
-  //   currentColorPresetIndex = param[0].asInt();
-  //   usingCustomColor = false;
-  //   effectVersion = receivedEffectVersion;
-  // }
 }
 
 // handle when we receive a status request from the other device
@@ -765,36 +689,7 @@ BLYNK_WRITE(VPIN_STATUS_READ) {
         morsecode_pulse = false;
         break;
       }
-    case BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT:
-      {
-        // if (receivedEffectVersion > effectVersion
-        //     || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
-        //   globalMode = GLOBALMODE_NIGHTLIGHT;
-        // }
-        break;
-      }
-    case BLYNK_STATUS_SWITCH_TO_NORMAL:
-      {
-        // if (receivedEffectVersion > effectVersion
-        //     || (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
-        //   globalMode = GLOBALMODE_NORMAL;
-        // }
-        break;
-      }
   }
-}
-
-// handle when we receive an effect update from the other device
-BLYNK_WRITE(VPIN_EFFECT_READ) {
-  // uint16_t receivedEffectVersion = param[1].asInt();
-
-  // // tie break on higher device ID
-  // if (receivedEffectVersion > effectVersion ||
-  //     (receivedEffectVersion == effectVersion && THING_INDEX == 0)) {
-  //   currentEffect = param[0].asInt();
-  //   effectVersion = receivedEffectVersion;
-  // }
-  // if received lower version, ignore it
 }
 
 BLYNK_WRITE(VPIN_ZERGBA_READ) {
@@ -808,7 +703,7 @@ BLYNK_WRITE(VPIN_ZERGBA_READ) {
 #define CONNECT_TIMEOUT 30 // seconds to wait to connect before booting local AP
 #define AP_DISABLED_TIMEOUT 1       // seconds to wait in the config portal before trying again
 #define AP_ENABLED_TIMEOUT 120
-#define MILLIS_BTWN_CONNECTION_RETRIES 120000  // retry wifi connection every 2 mins
+#define MILLIS_BTWN_CONNECTION_RETRIES 60000  // retry wifi connection every 2 mins
 bool tryWifiConnection(bool reset, bool configAp) {
   if (!isWifiEnabled) {
     return false;
@@ -838,6 +733,8 @@ bool tryWifiConnection(bool reset, bool configAp) {
       Blynk.config(BLYNK_AUTH_THIS);
       bool success = Blynk.connect(180);
     }
+
+    blynk_sendToOtherDevice();
   }
 
   // return status of wifi connection
