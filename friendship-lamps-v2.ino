@@ -1,12 +1,4 @@
-#define THING_S 0
-#define THING_M 1
-#define THING_INDEX THING_M
-
-#if THING_INDEX == 0
-#include "conf_0.h"
-#else
-#include "conf_1.h"
-#endif
+#include "conf.h"
 
 #include "gamma.h"
 #define FASTLED_INTERNAL // disable pragma messages
@@ -247,6 +239,13 @@ void setup() {
     FastLED.show();
 
     bool success = tryWifiConnection(resetWifi, true);
+
+    // flash green on success
+    if (success) {
+      fillSolid_RGBW({CRGB(0,255,0),0});
+      FastLED.show();
+      FastLED.delay(1000);
+    }
 
   }
 
@@ -655,13 +654,22 @@ void advanceToNextEffect() {
 }
 
 void timerEvent_sendToOtherDevice() {
+  bool forceSend = (millis() - forceSend_lastMillis) > FORCE_SEND_TO_OTHER_DEVICE_TICK;
   if (currentColorPresetIndex != lastSentColorPresetIndex
-      || (millis() - forceSend_lastMillis) > FORCE_SEND_TO_OTHER_DEVICE_TICK) {
+      || forceSend) {
     blynk_sendToOtherDevice();
   }
   if (currentEffect != lastSentEffect
-      || (millis() - forceSend_lastMillis) > FORCE_SEND_TO_OTHER_DEVICE_TICK) {
+      || forceSend) {
     blynk_sendEffectToOtherDevice();
+  }
+  if (forceSend) {
+    if (globalMode == GLOBALMODE_NORMAL) {
+      blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NORMAL, effectVersion);
+    } else {
+      blynkBridge.virtualWrite(VPIN_STATUS_SEND, BLYNK_STATUS_SWITCH_TO_NIGHTLIGHT, effectVersion);
+    }
+    forceSend_lastMillis = millis();
   }
   blynk_updateAppColorLed(getCurrentColor());
 }
@@ -713,6 +721,7 @@ BLYNK_WRITE(VPIN_STATUS_READ) {
     case BLYNK_STATUS_REQUEST_COLOR:
       {
         blynk_sendToOtherDevice();
+        blynk_sendEffectToOtherDevice();
         break;
       }
     case BLYNK_STATUS_MORSECODE_PULSE_ON: // TODO in-order delivery of morsecode messages
@@ -792,11 +801,12 @@ bool tryWifiConnection(bool reset, bool configAp) {
 
     // try to connect again; blocks until WiFi is connected, or time out
     wifiManager.autoConnect(WIFIMANAGER_SSID, WIFIMANAGER_PASSWORD);
-  }
 
-  if (!Blynk.connected() && WiFi.status() == WL_CONNECTED) {
-    Blynk.config(BLYNK_AUTH_THIS);
-    bool success = Blynk.connect(180);
+    // connect to Blynk
+    if (WiFi.status() == WL_CONNECTED) {
+      Blynk.config(BLYNK_AUTH_THIS);
+      bool success = Blynk.connect(180);
+    }
   }
 
   // return status of wifi connection
